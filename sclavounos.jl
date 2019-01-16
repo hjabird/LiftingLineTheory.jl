@@ -63,6 +63,36 @@ function theta_to_y(
     return a.semispan * cos(theta)
 end
 
+function dtheta_dy(
+    a :: SclavounosULLT,
+    y :: Real)
+    
+    assert(abs(y) <= a.semispan)
+    result = -1 / sqrt(pow(a.semispan, 2) - y^2)
+    return result
+end
+
+function dsintheta_dy(
+    a :: SclavounosULLT,
+    y :: Real,
+    k :: Int)
+    
+    theta = y_to_theta(a, y)
+    dtdy = dtheta_dy(y)
+    dGammadt = dsintheta_dtheta(a, theta, k)
+    return dGammadt * dtdy
+end
+
+function dsintheta_dtheta(
+    a :: SclavounosULLT,
+    theta :: Real,
+    k :: Int)
+    
+    assert(0 <= theta <= pi)
+    dGamma_dt = (2 * k + 1) * cos((2 * k + 1) * theta)
+    return dGamma_dt
+end
+
 function y_to_theta(
     a :: SclavounosULLT,
     y :: Real)
@@ -128,7 +158,112 @@ function integrate_gammaprime_k(
     y :: Real,
     k :: Int)
 
+    assert(k >= 0)
+    assert( abs(y) <= a.semispan )
     
+    i1 = integrate_gammaprime_K_term1(a, y, k)
+    i2 = integrate_gammaprime_K_term2(a, y, k)
+    i3 = integrate_gammaprime_K_term3(a, y, k)
+    
+    return i1 + i2 + i3
+end
+
+function integrate_gammaprime_K_term1(
+    a :: SclavounosULLT,
+    y :: Real,
+    k :: Int )
+    
+    theta_singular = y_to_theta(a, y)
+    
+    # We're using the singularity subtraction method to deal with a CPV problem.
+    singularity_coefficient = dsintheta_dtheta(theta_sing, k) * K_term1_numerator(a, 0)
+    
+    function integrand(theta_0 :: Real)
+        eta = theta_to_y(a, theta_0)
+        singular_part = K_term1_singularity(a, y - eta)
+        nonsingular_K = K_term1_numerator(a, y - eta)
+        gamma_dtheta = dsintheta_dtheta(a, theta0, k)
+        
+        singular_subtraction = (nonsingular_K  * gamma_dtheta - singularity_coefficient
+        return singular_part * singularity_subtraction
+    end
+    
+    integral =
+        QuadGK.quadgk(integrand, 0, theta_sing) +
+        QuadGK.quadgk(integrand, theta_sing, pi) +
+        singularity_coefficient * 0. # Glauert integral
+    
+    return -integral
+end
+
+function integrate_gammaprime_K_term2(
+    a :: SclavounosULLT,
+    y :: Real,
+    k :: Int )
+    
+    assert(abs(y) < a.semispan)
+    assert(k >= 0)
+    theta_singular = y_to_theta(a, y)
+    v = a.angular_fq / a.free_stream_vel
+    
+    integral_coefficient = im * v / 2
+    function nonsingular_integrand(theta_0)
+        return (2*k+1) * cos((2*k+1)*theta_0) / (v * a.semispan() * sin(theta))
+    end
+    function singular_integrand(theta_0)
+        return v * a.semispan * sin(theta_0) * sign(theta_0 - theta_singular) * SpecialFunctions.eint(v * a.semispan * abs(cos(theta_singular) - cos(theta_0))
+    end
+    
+    # The singular part (in terms of the singularity subtraction method) of the integral
+    singular_integral = v * a.semispan * (
+        (cos(theta_singular) + 1) * SpecialFunctions.eint(v * a.semispan * (cos(theta_singular) + 1)) +
+        (cos(theta_singular) - 1) * SpecialFunctions.eint(v * a.semispan * (1 - cos(theta_sing)))) +
+        exp( v * a.semispan * (cos(theta_singular) - 1)) -
+        exp(-v * a.semispan * (cos(theta_singular) + 1))
+        
+    ssm_variable = non_singular(theta_singular)
+    function numerical_integrand(theta_0)
+        singular_var = singular_integrand(theta_0)
+        non_singular_var = nonsingular_integrand(theta_0)
+        singularity_subtraction = non_singular_var - ssm_variable
+        integrand = singular_var * singularity_subtraction
+        return integrand
+    end
+    
+    int_lower = QuadGK.quadgk(numerical_integrand, 0, theta_singular)
+    int_upper = QuadGK.quadgk(numerical_integrand, theta_singular, pi)
+    complete_integral = integral_coefficient * (int_lower + int_upper + ssm_variable * singular_integral)
+    return complete_integral
+end
+
+function integrate_gammaprime_K_term3(
+    a :: SclavounosULLT,
+    y :: Real,
+    k :: Int)
+        
+    theta_singular = y_to_theta(a, y)
+    function integrand(theta_0)
+        eta = theta_to_y(a, theta_0)
+        return dsintheta_dtheta(a, theta_0, k) * K_term3(y - eta)
+    end
+    
+    integral =  QuadGK.quadgk(integrand, 0, theta_singular)  +
+                QuadGK.quadgk(integrand, theta_singular, pi)
+    return integral
+end
+
+function F(
+    a :: SclavounosULLT,
+    y :: Real )
+    
+    assert(abs(y) <= a.semispan)
+    error("Managing j=3/5")
 end
 
 
+
+    
+    
+    
+    
+    
