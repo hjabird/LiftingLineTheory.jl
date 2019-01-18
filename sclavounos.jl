@@ -1,32 +1,30 @@
 
 import SpecialFunctions
 
-@enum DownwashModel 
+@enum DownwashModel begin
     psuedosteady = 1
     extpsuedosteady = 2
     unsteady = 3
 end
 
-
 mutable struct SclavounosULLT
-    angular_fq :: Float64
-    free_stream_vel :: Float64
-    semispan :: Float64
+    angular_fq :: Real
+    free_stream_vel :: Real
+    semispan :: Real
 
     chord_at_points :: Function
-    pitch_location :: Float64
-    pitch_amplitude_fn :: Function
-    plunge_amplitude_fn :: Function
+    amplitude_fn :: Function
+    pitch_plunge :: Int64           # Plunge = 3, Pitch = 5. Otherwise invalid.
 
     downwash_model :: Function
-    num_terms :: In64
-    terms :: Vector{Complex{Float64}}
-    collocation_points :: Vector{Float64}
+    num_terms :: Int64
+    terms :: Vector{Complex{Real}}
+    collocation_points :: Vector{Real}  # In terms of theta in [0, pi]
 end
 
 function d3(
     a :: SclavounosULLT,
-    chord :: Float64)
+    chord :: Real)
 
     norm_fq = a.angular_fq / a.free_stream_vel
     semichord = chord / 2
@@ -38,7 +36,7 @@ end
 
 function d5(
     a :: SclavounosULLT,
-    chord :: Float64)
+    chord :: Real)
 
     return -chord * sclavounos_d3(SclavounosULLT, chord) / 4
 end
@@ -59,6 +57,7 @@ end
 function theta_to_y(
     a :: SclavounosULLT,
     theta :: Real)
+
     assert(abs(theta) < pi / 2)
     return a.semispan * cos(theta)
 end
@@ -122,6 +121,9 @@ function k_term2(
 
     coeff = sign(delta_y) / 2
     nu = a.angular_fq / a.free_stream_vel
+    # We'd like to use the E_1 (exponential integral function) here, but
+    # it isn't implemented in Julia. We'll use the identity  
+    # E_n(x) = x^(n-1) Gamma(1-n, x)
     e1_term = - im * nu * SpecialFunctions.eint(nu * abs(delta_y))
     return coeff * -1 * e1_term
 end
@@ -176,7 +178,8 @@ function integrate_gammaprime_K_term1(
     theta_singular = y_to_theta(a, y)
     
     # We're using the singularity subtraction method to deal with a CPV problem.
-    singularity_coefficient = dsintheta_dtheta(theta_sing, k) * K_term1_numerator(a, 0)
+    singularity_coefficient = 
+        dsintheta_dtheta(theta_sing, k) * K_term1_numerator(a, 0)
     
     function integrand(theta_0 :: Real)
         eta = theta_to_y(a, theta_0)
@@ -184,7 +187,8 @@ function integrate_gammaprime_K_term1(
         nonsingular_K = K_term1_numerator(a, y - eta)
         gamma_dtheta = dsintheta_dtheta(a, theta0, k)
         
-        singular_subtraction = (nonsingular_K  * gamma_dtheta - singularity_coefficient
+        singular_subtraction = nonsingular_K  * gamma_dtheta - 
+                                                    singularity_coefficient
         return singular_part * singularity_subtraction
     end
     
@@ -211,13 +215,16 @@ function integrate_gammaprime_K_term2(
         return (2*k+1) * cos((2*k+1)*theta_0) / (v * a.semispan() * sin(theta))
     end
     function singular_integrand(theta_0)
-        return v * a.semispan * sin(theta_0) * sign(theta_0 - theta_singular) * SpecialFunctions.eint(v * a.semispan * abs(cos(theta_singular) - cos(theta_0))
+        return v * a.semispan * sin(theta_0) * sign(theta_0 - theta_singular) * 
+            SpecialFunctions.eint(v * a.semispan * abs(cos(theta_singular) - cos(theta_0)))
     end
     
     # The singular part (in terms of the singularity subtraction method) of the integral
     singular_integral = v * a.semispan * (
-        (cos(theta_singular) + 1) * SpecialFunctions.eint(v * a.semispan * (cos(theta_singular) + 1)) +
-        (cos(theta_singular) - 1) * SpecialFunctions.eint(v * a.semispan * (1 - cos(theta_sing)))) +
+        (cos(theta_singular) + 1) * 
+            SpecialFunctions.eint(v * a.semispan * (cos(theta_singular) + 1)) +
+        (cos(theta_singular) - 1) * 
+            SpecialFunctions.eint(v * a.semispan * (1 - cos(theta_sing)))) +
         exp( v * a.semispan * (cos(theta_singular) - 1)) -
         exp(-v * a.semispan * (cos(theta_singular) + 1))
         
@@ -260,10 +267,51 @@ function F(
     error("Managing j=3/5")
 end
 
+function gamma_terms_matrix(
+    a :: SclavounosULLT )
 
+    idxs = collect(0:a.num_terms)
+    mtrx = map(
+        (i, j)->sin((2 * j + 1) * a.collocation_points[i]),
+        collect((i,j) for i in idxs, j in idxs)
+    )
+    return mtrx
+end
 
-    
-    
-    
-    
-    
+function rhs_vector(
+    a :: SclavounosULLT )
+
+    assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
+        "Sclavounos.jl: SclavounosULLT.pitch_plunge must be 3" *
+        " (plunge) or 5 (pitch). Value was ", a.pitch_plunge, "." )
+    if(a.pitch_plunge == 3) # Plunge
+        circ_vect = map(
+            theta->d3(a, theta_to_y(a, theta)),
+            a.collocation_points
+        )
+    elif(a.pitch_plunge == 5)   # Pitch
+        circ_vect = map(
+            theta->d5(a, theta_to_y(a, theta)) 
+                - a.free_stream_vel * d3(a, theta_to_y(a, theta))/ (im * a.angular_fq),
+            a.collocation_points
+        )
+    end
+    return circ_vect
+end
+
+function compute_solution(
+    a :: SclavounosULLT )
+
+    gamma_mtrx = gamma_terms_matrix(a)
+    integro_diff_mtrx = 
+        map(
+            (i, j)->
+                integro_diff_coeff(a, i) * 
+                integrate_gammaprime_k(a,  y_to_theta(a, a.collocation_points[i], j)),
+            collect((i, j) for i in 0:a.num_terms-1, j in 0:a.num_terms-1)
+        )
+    rhs_vec = rhs_vector(a)
+    solution = (gamma_mtrx - integro_diff_mtrx) \ rhs_vec
+    a.solution = solution
+    return
+end    
