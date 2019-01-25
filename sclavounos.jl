@@ -8,12 +8,39 @@ import HCubature
     unsteady = 3
 end
 
-mutable struct SclavounosULLT
+mutable struct StraightAnalyticWing
+    semispan :: Real        # Half the full span of the wing
+    chord_fn :: Function    # Defined in [-semispan, semispan]
+
+    function StraightAnalyticWing(
+        semispan :: Real, chord_fn :: Function) 
+        new(semispan, chord_fn)
+    end
+end
+
+function make_rectangular(
+    ::Type{StraightAnalyticWing}, 
+    aspect_ratio :: Real, span :: Real ) 
+
+    fn = y -> span / aspect_ratio
+    semispan = span / 2
+    return StraightAnalyticWing(semispan, fn)
+end
+
+function make_elliptic(
+    ::Type{StraightAnalyticWing}, 
+    aspect_ratio :: Real, span :: Real )
+
+    semispan = span / 2
+    fn = y -> (4 * semispan/ (aspect_ration * pi)) * sqrt(semispan^2 - y^2)
+    return StraightAnalyticWing(semispan, fn)
+end
+
+mutable struct HarmonicULLT
     angular_fq :: Real              # in rad / s
     free_stream_vel :: Real
-    semispan :: Real
 
-    chord_fn :: Function            # Defined for [-semispan, semispan]
+    wing :: StraightAnalyticWing
     amplitude_fn :: Function        # Currently unused.
     pitch_plunge :: Int64           # Plunge = 3, Pitch = 5. Otherwise invalid.
 
@@ -21,34 +48,70 @@ mutable struct SclavounosULLT
     num_terms :: Int64              # Number of terms in fourier expansion
     fourier_terms :: Vector{Complex{Real}}
     collocation_points :: Vector{Real}  # In terms of theta in [0, pi]
+
+    function HarmonicULLT(
+        angular_fq :: Real,
+        wing :: StraightAnalyticWing;
+        free_stream_vel = 1,
+        amplitude_fn = y -> 1,
+        pitch_plunge = 3,
+        downwash_model = unsteady,
+        num_terms = 8,
+        fourier_terms = Vector{Float64}(undef, 1),
+        collocation_points = Vector{Float64}(undef, 1)
+    )
+       @assert(angular_fq >= 0, "Positive frequencies only please") 
+       @assert(isfinite(angular_fq), "Non-finite frequencies cannot be used")
+       @assert(wing.semispan > 0, "Wing must have a positive span")
+       @assert(wing.chord_fn(0) >= 0, "Wing must have positive chord")
+
+       new(angular_fq, free_stream_vel, wing, amplitude_fn, pitch_plunge,
+        downwash_model, num_terms, fourier_terms, collocation_points)
+    end
 end
 
-function d3(
-    a :: SclavounosULLT,
-    y :: T) where T <: Real
+"""
+    d3(::HarmonicULLT, ::Real)
 
-    @assert(abs(y) <= a.semispan)
+Computes the normalised bound circulation on a harmonically plunging plate.
+"""
+function d3(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    @assert(abs(y) <= a.wing.semispan)
     norm_fq = a.angular_fq / a.free_stream_vel
-    semichord = a.chord_fn(y) / 2
+    semichord = a.wing.chord_fn(y) / 2
     num = 4 * a.free_stream_vel * exp(-im * semichord * norm_fq)
     den = im * SpecialFunctions.hankelh2(0, norm_fq * semichord) +
         SpecialFunctions.hankelh2(1, norm_fq * semichord)
     return num / den
 end
 
-function d5(
-    a :: SclavounosULLT,
-    y :: T) where T <: Real
+"""
+    d5(::HarmonicULLT, ::Real)
 
-    chord = a.chord_fn(y)
-    return -chord * sclavounos_d3(SclavounosULLT, y) / 4
+Computes the normalised bound circulation on a harmonically pitching plate.
+"""
+function d5(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    chord = a.wing.chord_fn(y)
+    return -chord * sclavounos_d3(HarmonicULLT, y) / 4
 end
 
-function compute_collocation_points(
-    a :: SclavounosULLT)
+"""
+    compute_collocation_points!(::HarmonicULLT)
+
+Computes the correct location of collocation points for the fourier
+approximation and applies to input HarmonicULLT
+"""
+function compute_collocation_points!(
+    a :: HarmonicULLT)
 
     nt = a.num_terms
-    @assert(nt > 0, "Number of terms in SclavounosULLT must be more than 0")
+    @assert(nt > 0, "Number of terms in HarmonicULLT must be more than 0")
     pos = Vector{Float64}(undef, a.num_terms)
     hpi = pi / 2
     for i = 1 : nt
@@ -58,28 +121,40 @@ function compute_collocation_points(
     return
 end
 
+"""
+    theta_to_y(::HarmonicULLT, theta::Real)
+
+Converts angular location on wing span in [0, pi] to the global y 
+location in [-semispan, semispan]
+"""
 function theta_to_y(
-    a :: SclavounosULLT,
-    theta :: T) where T <: Real
+    a :: HarmonicULLT,
+    theta :: Real)
 
     @assert(0 <= theta <= pi)
-    return a.semispan * cos(theta)
+    return a.wing.semispan * cos(theta)
 end
 
+"""
+    dtheta_dy(::HarmonicULLT, theta::Real)
+
+Computes the rate of change of theta with respect to global y.
+"""
 function dtheta_dy(
-    a :: SclavounosULLT,
-    y :: T) where T <: Real
+    a :: HarmonicULLT,
+    y :: Real)
     
-    @assert(abs(y) <= a.semispan)
-    result = -1 / sqrt(pow(a.semispan, 2) - y^2)
+    @assert(abs(y) <= a.wing.semispan)
+    result = -1 / sqrt(pow(a.wing.semispan, 2) - y^2)
     return result
 end
 
 function dsintheta_dy(
-    a :: SclavounosULLT,
-    y :: T,
-    k :: S) where {T <: Real, S <: Integer}
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
     
+    @assert(k >= 0, "Positive wavenumbers only please!")
     theta = y_to_theta(a, y)
     dtdy = dtheta_dy(y)
     dGammadt = dsintheta_dtheta(a, theta, k)
@@ -87,41 +162,48 @@ function dsintheta_dy(
 end
 
 function dsintheta_dtheta(
-    a :: SclavounosULLT,
-    theta :: T,
-    k :: S) where {T <: Real, S <: Integer}
+    a :: HarmonicULLT,
+    theta :: Real,
+    k :: Integer)
     
+    @assert(k >= 0, "Positive wavenumbers only please!")
     @assert(0 <= theta <= pi)
     dGamma_dt = (2 * k + 1) * cos((2 * k + 1) * theta)
     return dGamma_dt
 end
 
-function y_to_theta(
-    a :: SclavounosULLT,
-    y :: T) where {T <: Real}
+"""
+    y_to_theta(::HarmonicULLT, y::Real)
 
-    @assert(abs(y) <= a.semispan)
-    return acos(y / a.semispan)
+Converts the global y location in [-semispan, semispan] to the angular location 
+on wing span in [0, pi].
+"""
+function y_to_theta(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    @assert(abs(y) <= a.wing.semispan)
+    return acos(y / a.wing.semispan)
 end
 
 function k_term1_singularity(
-    a :: SclavounosULLT,
-    delta_y :: T) where {T <: Real}
+    a :: HarmonicULLT,
+    delta_y :: Real) 
 
     @assert(delta_y != 0, "delta_y == 0 leads to NaN (inf) answer")
     return 1 / delta_y
 end
 
 function k_term1_numerator(
-    a :: SclavounosULLT,
-    delta_y :: T) where {T <: Real}
+    a :: HarmonicULLT,
+    delta_y :: Real)
 
     return exp(- (a.angular_fq / a.free_stream_vel) * abs(delta_y)) / 2
 end
 
 function k_term2(
-    a :: SclavounosULLT,
-    delta_y :: T) where {T <: Real}
+    a :: HarmonicULLT,
+    delta_y :: Real)
 
     coeff = sign(delta_y) / 2
     nu = a.angular_fq / a.free_stream_vel
@@ -130,8 +212,8 @@ function k_term2(
 end
 
 function k_term3(
-    a :: SclavounosULLT,
-    delta_y :: T) where {T <: Real}
+    a :: HarmonicULLT,
+    delta_y :: Real)
 
     coeff = - sign(delta_y) / 2
     nu = a.angular_fq / a.free_stream_vel
@@ -141,8 +223,8 @@ function k_term3(
 end
 
 function p_eq(
-    a :: SclavounosULLT,
-    delta_y :: T) where {T <: Real}
+    a :: HarmonicULLT,
+    delta_y :: Real)
 
     function integrand1(t :: T) where T <: Real
         val = - delta_y * exp(-delta_y * t) * (asin(1 / t) + sqrt(t^2 -1) -t)
@@ -164,25 +246,32 @@ function p_eq(
 end
 
 function integrate_gammaprime_k(
-    a :: SclavounosULLT,
-    y :: T,
-    k :: S) where {T <: Real, S <: Integer}
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
 
     @assert(k >= 0)
-    @assert( abs(y) <= a.semispan )
+    @assert( abs(y) <= a.wing.semispan )
     
-    i1 = integrate_gammaprime_k_term1(a, y, k)
-    i2 = integrate_gammaprime_k_term2(a, y, k)
-    i3 = integrate_gammaprime_k_term3(a, y, k)
-    #println("y = ", y, ", k = ", k)
-    #println("i1 = ", i1, "\ti2 = ", i2, "\ti3 = ", i3)
-    return i1 + i2 + i3
+    if( a.downwash_model == unsteady )
+        i1 = integrate_gammaprime_k_term1(a, y, k)
+        i2 = integrate_gammaprime_k_term2(a, y, k)
+        i3 = integrate_gammaprime_k_term3(a, y, k)
+        #println("y = ", y, ", k = ", k)
+        #println("i1 = ", i1, "\ti2 = ", i2, "\ti3 = ", i3)
+        integral = i1 + i2 + i3
+    elseif( a.downwash_model == psuedosteady )
+        integral = integrate_gammaprime_k_psuedosteady(a, y, k)
+    elseif( a.downwash_model == extpsuedosteady )
+        println("Not done yet!")
+    end
+    return integral
 end
 
 function integrate_gammaprime_k_term1(
-    a :: SclavounosULLT,
-    y :: T,
-    k :: S) where {T <: Real, S <: Integer}
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
     
     theta_singular = y_to_theta(a, y)
     
@@ -218,32 +307,32 @@ function integrate_gammaprime_k_term1(
 end
 
 function integrate_gammaprime_k_term2(
-    a :: SclavounosULLT,
-    y :: T,
-    k :: S) where {T <: Real, S <: Integer}
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
     
-    @assert(abs(y) < a.semispan)
+    @assert(abs(y) < a.wing.semispan)
     @assert(k >= 0)
     theta_singular = y_to_theta(a, y)
     v = a.angular_fq / a.free_stream_vel
     
     integral_coefficient = im * v / 2
     function nonsingular_integrand(theta_0)
-        return (2*k+1) * cos((2*k+1)*theta_0) / (v * a.semispan * sin(theta_0))
+        return (2*k+1) * cos((2*k+1)*theta_0) / (v * a.wing.semispan * sin(theta_0))
     end
     function singular_integrand(theta_0)
-        return v * a.semispan * sin(theta_0) * sign(theta_0 - theta_singular) * 
-            expint(v * a.semispan * abs(cos(theta_singular) - cos(theta_0)))
+        return v * a.wing.semispan * sin(theta_0) * sign(theta_0 - theta_singular) * 
+            expint(v * a.wing.semispan * abs(cos(theta_singular) - cos(theta_0)))
     end
     
     # The singular part (in terms of the singularity subtraction method) of the integral
-    singular_integral = v * a.semispan * (
+    singular_integral = v * a.wing.semispan * (
         (cos(theta_singular) + 1) * 
-            expint(v * a.semispan * (cos(theta_singular) + 1)) +
+            expint(v * a.wing.semispan * (cos(theta_singular) + 1)) +
         (cos(theta_singular) - 1) * 
-            expint(v * a.semispan * (1 - cos(theta_singular)))) +
-        exp( v * a.semispan * (cos(theta_singular) - 1)) -
-        exp(-v * a.semispan * (cos(theta_singular) + 1))
+            expint(v * a.wing.semispan * (1 - cos(theta_singular)))) +
+        exp( v * a.wing.semispan * (cos(theta_singular) - 1)) -
+        exp(-v * a.wing.semispan * (cos(theta_singular) + 1))
         
     ssm_variable = nonsingular_integrand(theta_singular)
     function numerical_integrand(theta_0)
@@ -269,9 +358,9 @@ function integrate_gammaprime_k_term2(
 end
 
 function integrate_gammaprime_k_term3(
-    a :: SclavounosULLT,
-    y :: T,
-    k :: S) where {T <: Real, S <: Integer}
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
         
     theta_singular = y_to_theta(a, y)
     function integrand(theta_0)
@@ -292,8 +381,53 @@ function integrate_gammaprime_k_term3(
     return integral
 end
 
+function integrate_gammaprime_k_psuedosteady(
+    a :: HarmonicULLT, 
+    y :: Real, 
+    k :: Integer)
+
+    theta = y_to_theta(a, y)
+    integral = (2*k + 1) * pi * cos((2*k + 1) * theta) / 
+        (2 * a.wing.semispan * sin(theta))
+    return integral
+end
+
+function integrate_gammaprime_k_ext_psuedosteady(
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
+
+    theta = y_to_theta(a, y)
+    function singular(theta_0 :: Real)
+        return cos((2 * k + 1) * theta_0) / (cos(theta) - cos(theta_0))
+    end
+    ssm = integrate_gammaprime_k_ext_psuedosteady_subint(a, 0, k)
+    function integrand(theta_0 :: Real)
+        sing = singular(theta_0)
+        non_sing = ing
+
+end
+
+function integrate_gammaprime_k_ext_psuedosteady_subint(
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
+
+    om = a.angular_fq
+    function integrand(t :: Real)
+        num = exp(im * om * y * t / a.free_stream_vel)
+        den = (t^2 + 1)^(3/2)
+        return num / den
+    end
+    # Can fiddle with the Laguerre quadrature so that the numerator here fits
+    # better?
+    points, weights = FastGaussQuadrature.gausslaguerre(30)
+    integral = sum(weights .* integrand.(points))
+    return integral
+end
+
 function gamma_terms_matrix(
-    a :: SclavounosULLT )
+    a :: HarmonicULLT )
     idxs = collect(1:a.num_terms)
     mtrx = map(
         i->sin((2 * i[2] - 1) * a.collocation_points[i[1]]),
@@ -303,10 +437,10 @@ function gamma_terms_matrix(
 end
 
 function rhs_vector(
-    a :: SclavounosULLT )
+    a :: HarmonicULLT )
 
     @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
-        "Sclavounos.jl: SclavounosULLT.pitch_plunge must be 3" *
+        "Sclavounos.jl: HarmonicULLT.pitch_plunge must be 3" *
         " (plunge) or 5 (pitch). Value was ", a.pitch_plunge, "." )
     if(a.pitch_plunge == 3) # Plunge
         circ_vect = map(
@@ -324,17 +458,22 @@ function rhs_vector(
 end
 
 function integro_diff_mtrx_coeff(
-    a :: SclavounosULLT,
-    y_pos :: T) where T <: Real
+    a :: HarmonicULLT,
+    y_pos :: Real)
 
     coeff = d3(a, y_pos) / (2 * pi * a.angular_fq * im)
     return coeff
 end
 
-function compute_fourier_terms(
-    a :: SclavounosULLT )
+"""
+    compute_fourier_terms!(::HarmonicULLT)
 
-    #println("In compute fourier terms")
+Computes the fourier terms representing the bound vorticity on the span of the 
+wing. Assumes collocation points have already been computed.
+"""
+function compute_fourier_terms!(
+    a :: HarmonicULLT )
+
     gamma_mtrx = gamma_terms_matrix(a)
     integro_diff_mtrx = 
         map(
@@ -349,22 +488,45 @@ function compute_fourier_terms(
     return
 end    
 
+"""
+    compute_lift_coefficient(::HarmonicULLT)
+
+Compute the lift coefficient on a solved HarmonicULLT.
+
+# Example
+'''julia-repl
+julia> prob = HarmonicULLT(
+    1,  # Frequency
+    1,  # Free stream vel
+    2,  # Semispan
+    y->1,   # Chord with respect to span (rectangular)
+    y->1,   # Displacement with repect to span
+    3,  # Plunge (3) or pitch (5).
+    unsteady, 
+    8,  # Number of fourier terms
+    Vector{Float64}([]), # Vector/type for collocation points
+    Vector{Float64}([])) # Vector/type for solution
+julia> compute_collocation_points(prob)
+julia> compute_fourier_terms!(prob)
+julia> compute_lift_coefficient(prob)
+'''
+"""
 function compute_lift_coefficient(
-    a :: SclavounosULLT )
+    a :: HarmonicULLT )
 
     @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
-        "SclavounosULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
+        "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
 
     w_area = wing_area(a)
     if(a.pitch_plunge == 3)   # Plunge
         function circulatory_integrand(theta :: T) where T <: Real
             y = theta_to_y(a, theta)
-            semichord = a.chord_fn(y) / 2
+            semichord = a.wing.chord_fn(y) / 2
             f_3 = f_eq(a, y)
             c = theodorsen_fn((a.angular_fq / a.free_stream_vel) * semichord)
             return c * semichord * pi * (1 - f_3) * sin(theta)
         end
-        circulatory_integral_coeff = -8 * a.semispan / w_area
+        circulatory_integral_coeff = -8 * a.wing.semispan / w_area
         circulatory_integral = 
             HCubature.hquadrature(circulatory_integrand, 0, pi/2)[1] # Assumes symettric
         circulatory_part = circulatory_integral_coeff * circulatory_integral
@@ -376,7 +538,7 @@ function compute_lift_coefficient(
     elseif(a.pitch_plunge == 5)  # Pitch
         function integrand(theta :: T) where T <: Real
             y = theta_to_y(theta :: T) where T <: Real
-            semichord = a.chord_fn(y) / 2
+            semichord = a.wing.chord_fn(y) / 2
             f_5 = f_eq(a, y)
             c = theodorsen_fn((a.angular_fq / a.free_stream_vel) * semichord)
             circ = semichord + 
@@ -385,7 +547,7 @@ function compute_lift_coefficient(
                 (1 + im * a.angular_fq * f_5 / a.free_stream_vel)
             return pi * semichord * sin(theta) * (c * circ + added_mass)
         end
-        coeff = 4 * a.semispan / w_area
+        coeff = 4 * a.wing.semispan / w_area
         integral = HCubature.hquadrature(integrand, 0, pi/2)[1] # Assume symettric
         cl_val = coeff * integral
     end
@@ -393,10 +555,10 @@ function compute_lift_coefficient(
 end
 
 function f_eq(
-    a :: SclavounosULLT,
-    y :: T) where T <: Real
+    a :: HarmonicULLT,
+    y :: Real)
 
-    @assert(abs(y) <= a.semispan)
+    @assert(abs(y) <= a.wing.semispan)
     if (a.pitch_plunge == 3)
         f = 1 - bound_vorticity(a, y) / d3(a, y)
     else    # a.pitch_plunge == 5 
@@ -407,10 +569,10 @@ function f_eq(
 end
 
 function bound_vorticity(
-    a :: SclavounosULLT,
-    y :: T) where T <: Real
+    a :: HarmonicULLT,
+    y :: Real)
 
-    @assert(abs(y) <= a.semispan)
+    @assert(abs(y) <= a.wing.semispan)
     @assert(a.num_terms >= 1)
 
     theta = y_to_theta(a, y)
@@ -423,7 +585,12 @@ function bound_vorticity(
     return sum
 end
 
-function theodorsen_fn(k :: T) where T <: Real
+"""
+    theodorsen_fn(k::Real)
+
+Theodorsen's function C(k), where k is chord reduced frequency = omega c / 2 U.
+"""
+function theodorsen_fn(k :: Real)
     @assert(k >= 0, "Chord reduced frequency should be positive.")
 
     h21 = SpecialFunctions.hankelh2(1, k)
@@ -432,30 +599,27 @@ function theodorsen_fn(k :: T) where T <: Real
 end
 
 function wing_area(
-    a :: SclavounosULLT)
+    a :: HarmonicULLT)
 
     # Integrate chord from accross span.
-    return HCubature.hquadrature(a.chord_fn, -a.semispan, a.semispan)[1]
+    return HCubature.hquadrature(a.wing.chord_fn, -a.wing.semispan, a.wing.semispan)[1]
 end
 
 function wing_heave_added_mass(
-    a :: SclavounosULLT ) 
+    a :: HarmonicULLT ) 
 
     function integrand(y :: T) where T <: Real
-        semichord = a.chord_fn(y) / 2
+        semichord = a.wing.chord_fn(y) / 2
         return semichord * semichord
     end
-    integral = HCubature.hquadrature(integrand, -a.semispan, a.semispan)[1]
+    integral = HCubature.hquadrature(integrand, -a.wing.semispan, a.wing.semispan)[1]
     return 2 * pi * integral
 end
 
 function linear_remap(
-    pointin :: T,   weightin :: T,
-    old_a :: R,     old_b :: S,
-    new_a :: Q,     new_b :: U ) where {
-        T <: Number, w <: Number, 
-        R <: Number, S <: Number, 
-        Q <: Number, U <: Number}
+    pointin :: Number,   weightin :: Number,
+    old_a :: Number,     old_b :: Number,
+    new_a :: Number,     new_b :: Number )
 
     dorig = (pointin - old_a) / (old_b - old_a)
     p_new = new_a + dorig * (new_b - new_a)
