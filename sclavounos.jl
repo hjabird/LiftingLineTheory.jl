@@ -6,6 +6,7 @@ import HCubature
     psuedosteady = 1
     extpsuedosteady = 2
     unsteady = 3
+    strip_theory = 4
 end
 
 mutable struct StraightAnalyticWing
@@ -32,7 +33,20 @@ function make_elliptic(
     aspect_ratio :: Real, span :: Real )
 
     semispan = span / 2
-    fn = y -> (4 * semispan/ (aspect_ration * pi)) * sqrt(semispan^2 - y^2)
+    fn = y -> (4 * semispan/ (aspect_ratio * pi)) * sqrt(semispan^2 - y^2)
+    return StraightAnalyticWing(semispan, fn)
+end
+
+function make_van_dyke_cusped(
+    ::Type{StraightAnalyticWing},
+    aspect_ratio :: Real, span :: Real, n :: Int)
+
+    @assert(n >= 0, "N must be postive")
+    @assert(n < 7, "Only implemented for n < 7")
+    semispan = span / 2
+    kns = [1, 4/pi, 3/2, 16/(3 * pi), 15/8, 32/(5*pi), 32/16, 256/(35*pi)]
+    kn = kns[n + 1]
+    fn = y->kn * (1 - y^2 / semispan^2)^(n/2)
     return StraightAnalyticWing(semispan, fn)
 end
 
@@ -257,13 +271,13 @@ function integrate_gammaprime_k(
         i1 = integrate_gammaprime_k_term1(a, y, k)
         i2 = integrate_gammaprime_k_term2(a, y, k)
         i3 = integrate_gammaprime_k_term3(a, y, k)
-        #println("y = ", y, ", k = ", k)
-        #println("i1 = ", i1, "\ti2 = ", i2, "\ti3 = ", i3)
         integral = i1 + i2 + i3
     elseif( a.downwash_model == psuedosteady )
         integral = integrate_gammaprime_k_psuedosteady(a, y, k)
     elseif( a.downwash_model == extpsuedosteady )
-        println("Not done yet!")
+        integral = integrate_gammaprime_k_ext_psuedosteady(a, y, k)
+    elseif( a.downwash_model == strip_theory )
+        integral = 0
     end
     return integral
 end
@@ -387,7 +401,7 @@ function integrate_gammaprime_k_psuedosteady(
     k :: Integer)
 
     theta = y_to_theta(a, y)
-    integral = (2*k + 1) * pi * cos((2*k + 1) * theta) / 
+    integral = (2*k + 1) * pi * sin((2*k + 1) * theta) / 
         (2 * a.wing.semispan * sin(theta))
     return integral
 end
@@ -397,15 +411,29 @@ function integrate_gammaprime_k_ext_psuedosteady(
     y :: Real,
     k :: Integer)
 
-    theta = y_to_theta(a, y)
-    function singular(theta_0 :: Real)
-        return cos((2 * k + 1) * theta_0) / (cos(theta) - cos(theta_0))
+    theta_singular = y_to_theta(a, y)
+    ssm_var = integrate_gammaprime_k_ext_psuedosteady_subint(a, 0, k)
+    function integrand(theta_0)
+        eta = theta_to_y(a, theta_0)
+        singular = cos((2*k +1)*theta_0) / (2*(y - eta))
+        non_singular = 
+            integrate_gammaprime_k_ext_psuedosteady_subint(a, y - eta, k)
+        return singular * (non_singular - ssm_var)
     end
-    ssm = integrate_gammaprime_k_ext_psuedosteady_subint(a, 0, k)
-    function integrand(theta_0 :: Real)
-        sing = singular(theta_0)
-        non_sing = ing
 
+    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
+    pts2 = map(
+        x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),
+        zip(nodes1, weights1))
+    pts1 = map(
+        x->linear_remap(x[1], x[2], -1, 1, 0, theta_singular),
+        zip(nodes1, weights1))
+    integral =
+        sum(last.(pts1) .* map(integrand, first.(pts1))) +
+        sum(last.(pts2) .* map(integrand, first.(pts2))) 
+    coeff = -(2*k + 1) / (2 * wing.semispan)
+    return coeff * (integral -
+        ssm_var * pi* sin((2* k + 1) * theta_singular) / sin(theta_singular))
 end
 
 function integrate_gammaprime_k_ext_psuedosteady_subint(
@@ -421,7 +449,7 @@ function integrate_gammaprime_k_ext_psuedosteady_subint(
     end
     # Can fiddle with the Laguerre quadrature so that the numerator here fits
     # better?
-    points, weights = FastGaussQuadrature.gausslaguerre(30)
+    points, weights = FastGaussQuadrature.gausslaguerre(50)
     integral = sum(weights .* integrand.(points))
     return integral
 end
