@@ -431,7 +431,7 @@ function integrate_gammaprime_k_ext_psuedosteady(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    coeff = -(2*k + 1) / (2 * wing.semispan)
+    coeff = -(2*k + 1)
     return coeff * (integral -
         ssm_var * pi* sin((2* k + 1) * theta_singular) / sin(theta_singular))
 end
