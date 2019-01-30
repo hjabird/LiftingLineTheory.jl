@@ -412,10 +412,11 @@ function integrate_gammaprime_k_ext_psuedosteady(
     k :: Integer)
 
     theta_singular = y_to_theta(a, y)
-    ssm_var = integrate_gammaprime_k_ext_psuedosteady_subint(a, 0, k)
+    ssm_var = 1 # save evaluating 
+        # integrate_gammaprime_k_ext_psuedosteady_subint(a, 0, k)
     function integrand(theta_0)
         eta = theta_to_y(a, theta_0)
-        singular = cos((2*k +1)*theta_0) / (2*(y - eta))
+        singular = a.wing.semispan * cos((2*k +1)*theta_0) / (y - eta)
         non_singular = 
             integrate_gammaprime_k_ext_psuedosteady_subint(a, y - eta, k)
         return singular * (non_singular - ssm_var)
@@ -431,9 +432,9 @@ function integrate_gammaprime_k_ext_psuedosteady(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    coeff = -(2*k + 1)
+    coeff = - (2*k + 1) / (2 * a.wing.semispan)
     return coeff * (integral -
-        ssm_var * pi* sin((2* k + 1) * theta_singular) / sin(theta_singular))
+        ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
 end
 
 function integrate_gammaprime_k_ext_psuedosteady_subint(
@@ -445,7 +446,7 @@ function integrate_gammaprime_k_ext_psuedosteady_subint(
     function integrand(t :: Real)
         num = exp(im * om * y * t / a.free_stream_vel)
         den = (t^2 + 1)^(3/2)
-        return num / den
+        return num / den * exp(t)    # Because of the quadrature
     end
     # Can fiddle with the Laguerre quadrature so that the numerator here fits
     # better?
