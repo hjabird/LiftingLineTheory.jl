@@ -112,7 +112,7 @@ function d5(
     y :: Real)
 
     chord = a.wing.chord_fn(y)
-    return -chord * sclavounos_d3(HarmonicULLT, y) / 4
+    return -chord * d3(a, y) / 4
 end
 
 """
@@ -517,36 +517,35 @@ function compute_fourier_terms!(
     return
 end    
 
-"""
-    compute_lift_coefficient(::HarmonicULLT)
+function chord_lift_coefficient(
+    a :: HarmonicULLT,
+    y :: Real )
 
-Compute the lift coefficient on a solved HarmonicULLT.
+    @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
+        "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
+    chord = a.wing.chord_fn(y)
+    f = f_eq(a, y)
+    v = a.angular_fq / a.free_stream_vel
+    C = theodorsen_fn(v * chord / 2)
+    if(a.pitch_plunge == 3)
+        circ = -2 * C * pi * (1 - f)
+        added_mass = - im * v * chord_heave_added_mass(a, y) / chord
+        cl = circ + added_mass
+    elseif(a.pitch_plunge == 5) 
+        circ = C * (chord/2 + 2 / (im * v) + 2 * f)
+        added_mass = chord * (1 + v * im * f) / 2
+        cl = pi * (circ + added_mass)
+    end
+    return cl
+end
 
-# Example
-'''julia-repl
-julia> prob = HarmonicULLT(
-    1,  # Frequency
-    1,  # Free stream vel
-    2,  # Semispan
-    y->1,   # Chord with respect to span (rectangular)
-    y->1,   # Displacement with repect to span
-    3,  # Plunge (3) or pitch (5).
-    unsteady, 
-    8,  # Number of fourier terms
-    Vector{Float64}([]), # Vector/type for collocation points
-    Vector{Float64}([])) # Vector/type for solution
-julia> compute_collocation_points(prob)
-julia> compute_fourier_terms!(prob)
-julia> compute_lift_coefficient(prob)
-'''
-"""
 function compute_lift_coefficient(
     a :: HarmonicULLT )
 
     @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
         "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
 
-    w_area = wing_area(a)
+    w_area = wing_area(a.wing)
     if(a.pitch_plunge == 3)   # Plunge
         function circulatory_integrand(theta :: T) where T <: Real
             y = theta_to_y(a, theta)
@@ -566,7 +565,7 @@ function compute_lift_coefficient(
         cl_val = circulatory_part + added_mass_part
     elseif(a.pitch_plunge == 5)  # Pitch
         function integrand(theta :: T) where T <: Real
-            y = theta_to_y(theta :: T) where T <: Real
+            y = theta_to_y(a, theta)
             semichord = a.wing.chord_fn(y) / 2
             f_5 = f_eq(a, y)
             c = theodorsen_fn((a.angular_fq / a.free_stream_vel) * semichord)
@@ -628,21 +627,27 @@ function theodorsen_fn(k :: Real)
 end
 
 function wing_area(
-    a :: HarmonicULLT)
+    a :: StraightAnalyticWing)
 
     # Integrate chord from accross span.
-    return HCubature.hquadrature(a.wing.chord_fn, -a.wing.semispan, a.wing.semispan)[1]
+    return HCubature.hquadrature(a.chord_fn, -a.semispan, a.semispan)[1]
+end
+
+function chord_heave_added_mass(
+    a :: HarmonicULLT,
+    y :: Real )
+
+    @assert(abs(y) <= a.wing.semispan, "y outside of span")
+    return 2 * pi * (a.wing.chord_fn(y) / 2)^2
 end
 
 function wing_heave_added_mass(
     a :: HarmonicULLT ) 
 
-    function integrand(y :: T) where T <: Real
-        semichord = a.wing.chord_fn(y) / 2
-        return semichord * semichord
-    end
-    integral = HCubature.hquadrature(integrand, -a.wing.semispan, a.wing.semispan)[1]
-    return 2 * pi * integral
+    integral = HCubature.hquadrature(
+        y->chord_heave_added_mass(a, y), 
+        -a.wing.semispan, a.wing.semispan)[1]
+    return integral
 end
 
 function linear_remap(
