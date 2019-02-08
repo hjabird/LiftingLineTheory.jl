@@ -9,6 +9,8 @@ import HCubature
     strip_theory = 4
 end
 
+# Straight analytic wing
+#==============================================================================#
 mutable struct StraightAnalyticWing
     semispan :: Real        # Half the full span of the wing
     chord_fn :: Function    # Defined in [-semispan, semispan]
@@ -33,7 +35,8 @@ function make_elliptic(
     aspect_ratio :: Real, span :: Real )
 
     semispan = span / 2
-    fn = y -> (4 * semispan/ (aspect_ratio * pi)) * sqrt(semispan^2 - y^2)
+    # We multiply by two since we want the sum of the LE + TE offsets.
+    fn = y -> (8 / (aspect_ratio * pi)) * sqrt(semispan^2 - y^2)
     return StraightAnalyticWing(semispan, fn)
 end
 
@@ -46,10 +49,17 @@ function make_van_dyke_cusped(
     semispan = span / 2
     kns = [1, 4/pi, 3/2, 16/(3 * pi), 15/8, 32/(5*pi), 32/16, 256/(35*pi)]
     kn = kns[n + 1]
-    fn = y->kn * (1 - y^2 / semispan^2)^(n/2)
+    fn = y->semispan * 0.5 * kn * (1 - y^2 / semispan^2)^(n/2)
     return StraightAnalyticWing(semispan, fn)
 end
 
+function calculate_aspect_ratio(a :: StraightAnalyticWing)
+    area = wing_area(a)
+    return 4 * a.semispan ^ 2 / area
+end
+
+# Harmonic ULLT
+#==============================================================================#
 mutable struct HarmonicULLT
     angular_fq :: Real              # in rad / s
     free_stream_vel :: Real
@@ -85,34 +95,43 @@ mutable struct HarmonicULLT
 end
 
 """
-    d3(::HarmonicULLT, ::Real)
+    d_heave(::HarmonicULLT, ::Real)
 
 Computes the normalised bound circulation on a harmonically plunging plate.
 """
-function d3(
+function d_heave(
     a :: HarmonicULLT,
     y :: Real)
 
     @assert(abs(y) <= a.wing.semispan)
     norm_fq = a.angular_fq / a.free_stream_vel
     semichord = a.wing.chord_fn(y) / 2
-    num = 4 * a.free_stream_vel * exp(-im * semichord * norm_fq)
+    num = 4 * a.free_stream_vel * exp(-im * semichord * norm_fq) * 
+        a.amplitude_fn(y)
     den = im * SpecialFunctions.hankelh2(0, norm_fq * semichord) +
         SpecialFunctions.hankelh2(1, norm_fq * semichord)
     return num / den
 end
 
 """
-    d5(::HarmonicULLT, ::Real)
+    d_pitch(::HarmonicULLT, ::Real)
 
 Computes the normalised bound circulation on a harmonically pitching plate.
 """
-function d5(
+function d_pitch(
     a :: HarmonicULLT,
     y :: Real)
 
-    chord = a.wing.chord_fn(y)
-    return -chord * d3(a, y) / 4
+    @assert(abs(y) <= a.wing.semispan)
+    U = a.free_stream_vel
+    om = a.angular_fq
+    nu = om / U
+    semichord = a.wing.chord_fn(y) / 2
+    num = -4 * U * exp(-im * semichord * nu) * 
+        a.amplitude_fn(y) * (-U^2/(im * om) + semichord / (2 * U))
+    den = im * SpecialFunctions.hankelh2(0, nu * semichord) +
+        SpecialFunctions.hankelh2(1, nu * semichord)
+    return num / den
 end
 
 """
@@ -473,13 +492,12 @@ function rhs_vector(
         " (plunge) or 5 (pitch). Value was ", a.pitch_plunge, "." )
     if(a.pitch_plunge == 3) # Plunge
         circ_vect = map(
-            theta->d3(a, theta_to_y(a, theta)),
+            theta->d_heave(a, theta_to_y(a, theta)),
             a.collocation_points
         )
     elseif(a.pitch_plunge == 5)   # Pitch
         circ_vect = map(
-            theta->d5(a, theta_to_y(a, theta)) 
-                - a.free_stream_vel * d3(a, theta_to_y(a, theta))/ (im * a.angular_fq),
+            theta->d_pitch(a, theta_to_y(a, theta)) ,
             a.collocation_points
         )
     end
@@ -490,7 +508,7 @@ function integro_diff_mtrx_coeff(
     a :: HarmonicULLT,
     y_pos :: Real)
 
-    coeff = d3(a, y_pos) / (2 * pi * a.angular_fq * im)
+    coeff = d_heave(a, y_pos) / (2 * pi * a.angular_fq * im)
     return coeff
 end
 
@@ -517,28 +535,6 @@ function compute_fourier_terms!(
     return
 end    
 
-function chord_lift_coefficient(
-    a :: HarmonicULLT,
-    y :: Real )
-
-    @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
-        "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
-    chord = a.wing.chord_fn(y)
-    f = f_eq(a, y)
-    v = a.angular_fq / a.free_stream_vel
-    C = theodorsen_fn(v * chord / 2)
-    if(a.pitch_plunge == 3)
-        circ = -2 * C * pi * (1 - f)
-        added_mass = - im * v * chord_heave_added_mass(a, y) / chord
-        cl = circ + added_mass
-    elseif(a.pitch_plunge == 5) 
-        circ = C * (chord/2 + 2 / (im * v) + 2 * f)
-        added_mass = chord * (1 + v * im * f) / 2
-        cl = pi * (circ + added_mass)
-    end
-    return cl
-end
-
 function compute_lift_coefficient(
     a :: HarmonicULLT )
 
@@ -546,53 +542,72 @@ function compute_lift_coefficient(
         "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
 
     w_area = wing_area(a.wing)
-    if(a.pitch_plunge == 3)   # Plunge
-        function circulatory_integrand(theta :: T) where T <: Real
-            y = theta_to_y(a, theta)
-            semichord = a.wing.chord_fn(y) / 2
-            f_3 = f_eq(a, y)
-            c = theodorsen_fn((a.angular_fq / a.free_stream_vel) * semichord)
-            return c * semichord * pi * (1 - f_3) * sin(theta)
-        end
-        circulatory_integral_coeff = -8 * a.wing.semispan / w_area
-        circulatory_integral = 
-            HCubature.hquadrature(circulatory_integrand, 0, pi/2)[1] # Assumes symettric
-        circulatory_part = circulatory_integral_coeff * circulatory_integral
-
-        added_mass_coeff = -1 * im * (a.angular_fq / a.free_stream_vel)
-        added_mass_integral = wing_heave_added_mass(a) / w_area
-        added_mass_part = added_mass_coeff *  added_mass_integral
-        cl_val = circulatory_part + added_mass_part
-    elseif(a.pitch_plunge == 5)  # Pitch
-        function integrand(theta :: T) where T <: Real
-            y = theta_to_y(a, theta)
-            semichord = a.wing.chord_fn(y) / 2
-            f_5 = f_eq(a, y)
-            c = theodorsen_fn((a.angular_fq / a.free_stream_vel) * semichord)
-            circ = semichord + 
-                (2 * a.free_stream_vel / (im * a.angular_fq) + 2 * f_5)
-            added_mass = semichord * 
-                (1 + im * a.angular_fq * f_5 / a.free_stream_vel)
-            return pi * semichord * sin(theta) * (c * circ + added_mass)
-        end
-        coeff = 4 * a.wing.semispan / w_area
-        integral = HCubature.hquadrature(integrand, 0, pi/2)[1] # Assume symettric
-        cl_val = coeff * integral
+    if(a.pitch_plunge == 3)
+        chord_cl_fn = associated_chord_cl_heave
+    elseif(a.pitch_plunge == 5)
+        chord_cl_fn = associated_chord_cl_pitch
     end
-    return cl_val
+    integrand = y->chord_lift_coefficient(a, y) * 
+        a.amplitude_fn(y) * a.wing.chord_fn(y)
+    integral = HCubature.hquadrature(integrand, 
+        -a.wing.semispan, a.wing.semispan)[1] / w_area
+    CL = integral
+    return CL
+end
+
+function chord_lift_coefficient(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    # Notes 5 pg 57
+    if(a.pitch_plunge == 3)
+        associated_cl_fn = associated_chord_cl_heave
+    elseif(a.pitch_plunge == 5)
+        associated_cl_fn = associated_chord_cl_pitch
+    end
+    clA = a.amplitude_fn(y) * associated_cl_fn(a, y) - f_eq(a, y) *
+        associated_chord_cl_heave(a, y)
+    return clA / a.amplitude_fn(y)
+end
+
+function associated_chord_cl_heave(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    # Notes 5 pg 53
+    @assert(abs(y) <= a.wing.semispan)
+    k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    t1 = -2 * pi * theodorsen_fn(k) 
+    t2 = -im * pi * k 
+    return t1 + t2
+end
+
+function associated_chord_cl_pitch(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    # Notes 5 pg 53
+    @assert(abs(y) <= a.wing.semispan)
+    semichord = a.wing.chord_fn(y) / 2 
+    t1 = pi * semichord
+    k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    t21 = -2 * a.free_stream_vel * theodorsen_fn(k) / (im * a.angular_fq)
+    t22 = 1 + im * k / 2
+    t2 = t21 * t22
+    return t1 + t2
 end
 
 function f_eq(
     a :: HarmonicULLT,
     y :: Real)
-
+    # Notes 5 pg 57
     @assert(abs(y) <= a.wing.semispan)
-    if (a.pitch_plunge == 3)
-        f = 1 - bound_vorticity(a, y) / d3(a, y)
-    else    # a.pitch_plunge == 5 
-        f = (d5(a, y) - bound_vorticity(a, y)) / d3(a, y) - 
-            a.free_stream_vel / (im * a.angular_fq)
+    if(a.pitch_plunge == 3)
+        d_fn = d_heave
+    elseif(a.pitch_plunge == 5)
+        d_fn = d_pitch
     end
+    f = (d_fn(a, y) - bound_vorticity(a, y)) / d_heave(a, y)
     return f
 end
 
@@ -631,23 +646,6 @@ function wing_area(
 
     # Integrate chord from accross span.
     return HCubature.hquadrature(a.chord_fn, -a.semispan, a.semispan)[1]
-end
-
-function chord_heave_added_mass(
-    a :: HarmonicULLT,
-    y :: Real )
-
-    @assert(abs(y) <= a.wing.semispan, "y outside of span")
-    return 2 * pi * (a.wing.chord_fn(y) / 2)^2
-end
-
-function wing_heave_added_mass(
-    a :: HarmonicULLT ) 
-
-    integral = HCubature.hquadrature(
-        y->chord_heave_added_mass(a, y), 
-        -a.wing.semispan, a.wing.semispan)[1]
-    return integral
 end
 
 function linear_remap(
