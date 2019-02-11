@@ -49,7 +49,7 @@ function make_van_dyke_cusped(
     semispan = span / 2
     kns = [1, 4/pi, 3/2, 16/(3 * pi), 15/8, 32/(5*pi), 32/16, 256/(35*pi)]
     kn = kns[n + 1]
-    fn = y->semispan * 0.5 * kn * (1 - y^2 / semispan^2)^(n/2)
+    fn = y->2 * kn * semispan * (1 - y^2 / semispan^2)^(n/2) / aspect_ratio
     return StraightAnalyticWing(semispan, fn)
 end
 
@@ -113,6 +113,19 @@ function d_heave(
     return num / den
 end
 
+function d_heave_normalised(
+    a :: HarmonicULLT,
+    y :: Real)
+    # Amplitude fn = 1
+    @assert(abs(y) <= a.wing.semispan)
+    norm_fq = a.angular_fq / a.free_stream_vel
+    semichord = a.wing.chord_fn(y) / 2
+    num = 4 * a.free_stream_vel * exp(-im * semichord * norm_fq)
+    den = im * SpecialFunctions.hankelh2(0, norm_fq * semichord) +
+        SpecialFunctions.hankelh2(1, norm_fq * semichord)
+    return num / den
+end
+
 """
     d_pitch(::HarmonicULLT, ::Real)
 
@@ -128,7 +141,7 @@ function d_pitch(
     nu = om / U
     semichord = a.wing.chord_fn(y) / 2
     num = -4 * U * exp(-im * semichord * nu) * 
-        a.amplitude_fn(y) * (-U^2/(im * om) + semichord / (2 * U))
+        a.amplitude_fn(y) * (U/(im * om) + semichord / 2)
     den = im * SpecialFunctions.hankelh2(0, nu * semichord) +
         SpecialFunctions.hankelh2(1, nu * semichord)
     return num / den
@@ -491,16 +504,14 @@ function rhs_vector(
         "Sclavounos.jl: HarmonicULLT.pitch_plunge must be 3" *
         " (plunge) or 5 (pitch). Value was ", a.pitch_plunge, "." )
     if(a.pitch_plunge == 3) # Plunge
-        circ_vect = map(
-            theta->d_heave(a, theta_to_y(a, theta)),
-            a.collocation_points
-        )
+        d_fn = d_heave
     elseif(a.pitch_plunge == 5)   # Pitch
-        circ_vect = map(
-            theta->d_pitch(a, theta_to_y(a, theta)) ,
-            a.collocation_points
-        )
+        d_fn = d_pitch
     end
+    circ_vect = map(
+        theta->d_fn(a, theta_to_y(a, theta)),
+        a.collocation_points
+    )
     return circ_vect
 end
 
@@ -508,7 +519,7 @@ function integro_diff_mtrx_coeff(
     a :: HarmonicULLT,
     y_pos :: Real)
 
-    coeff = d_heave(a, y_pos) / (2 * pi * a.angular_fq * im)
+    coeff = d_heave_normalised(a, y_pos) / (2 * pi * a.angular_fq * im)
     return coeff
 end
 
@@ -549,8 +560,11 @@ function compute_lift_coefficient(
     end
     integrand = y->chord_lift_coefficient(a, y) * 
         a.amplitude_fn(y) * a.wing.chord_fn(y)
-    integral = HCubature.hquadrature(integrand, 
-        -a.wing.semispan, a.wing.semispan)[1] / w_area
+    nodes, weights = FastGaussQuadrature.gausslegendre(70)
+    pts = map(
+        x->linear_remap(x[1], x[2], -1, 1, -a.wing.semispan, a.wing.semispan),
+        zip(nodes, weights))
+    integral = sum(last.(pts) .* map(integrand, first.(pts)))/ w_area
     CL = integral
     return CL
 end
@@ -591,7 +605,7 @@ function associated_chord_cl_pitch(
     semichord = a.wing.chord_fn(y) / 2 
     t1 = pi * semichord
     k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
-    t21 = -2 * a.free_stream_vel * theodorsen_fn(k) / (im * a.angular_fq)
+    t21 = 2 * a.free_stream_vel * theodorsen_fn(k) * pi / (im * a.angular_fq)
     t22 = 1 + im * k / 2
     t2 = t21 * t22
     return t1 + t2
@@ -602,12 +616,16 @@ function f_eq(
     y :: Real)
     # Notes 5 pg 57
     @assert(abs(y) <= a.wing.semispan)
-    if(a.pitch_plunge == 3)
-        d_fn = d_heave
-    elseif(a.pitch_plunge == 5)
-        d_fn = d_pitch
+    if(a.downwash_model == strip_theory)
+        f = 0
+    else
+        if(a.pitch_plunge == 3)
+            d_fn = d_heave
+        elseif(a.pitch_plunge == 5)
+            d_fn = d_pitch
+        end
+        f = (d_fn(a, y) - bound_vorticity(a, y)) / d_heave_normalised(a, y)
     end
-    f = (d_fn(a, y) - bound_vorticity(a, y)) / d_heave(a, y)
     return f
 end
 
