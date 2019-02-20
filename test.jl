@@ -1,10 +1,9 @@
 include("sclavounos.jl")
-using PyPlot
 
 semispan = 4
 aspect_ratio = 4
-wing = make_van_dyke_cusped(StraightAnalyticWing, aspect_ratio, semispan*2, 0)
-srf = collect(0.001:0.25:8.02)
+wing = make_van_dyke_cusped(StraightAnalyticWing, aspect_ratio, semispan*2, 3)
+srf = collect(0.001:0.1:8.02)
 println("Semispan = ", semispan, ", AR = ", aspect_ratio, ", area = ", wing_area(wing))
 kvar = 3
 fterms = 8
@@ -84,6 +83,17 @@ function oabs(x, srf)
     return map(x->abs(x[2]), zip(srf, x))
 end
 
+using DataFrames
+using CSVFiles
+df = DataFrame(
+    SpanReducedFrequency=srf,
+    strip=abs.(clst),
+    psuedosteady=abs.(cls),
+    xfil=abs.(clt1),
+    unsteady=abs.(clu))
+save("cuAR4_srf_plunge_study.csv", df)
+
+#=
 figure()
 plot(srf, oabs(clst, srf), label="Strip theory")
 plot(srf, oabs(cls, srf), label="Psuedosteady")
@@ -103,3 +113,4 @@ axis([0, maximum(srf), -270, 0])
 xlabel(L"\omega d/U")
 ylabel(L"ph(C_L)")
 legend()
+=#

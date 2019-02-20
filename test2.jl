@@ -1,10 +1,9 @@
 include("sclavounos.jl")
-using PyPlot
 
 semispan = 2
 aspect_ratio = 4
-wing = make_elliptic(StraightAnalyticWing, aspect_ratio, semispan * 2)
-srf = 1
+wing = make_rectangular(StraightAnalyticWing, aspect_ratio, semispan * 2)
+srf = 8
 area = wing_area(wing)
 
 println("Semispan = ", semispan, ", AR = ", aspect_ratio, ", area = ", area)
@@ -20,33 +19,41 @@ prob = HarmonicULLT(
     srf / semispan,
     wing,
     downwash_model = unsteady,
-    pitch_plunge = 5
+    pitch_plunge = 3
 )
 compute_collocation_points!(prob)
 compute_fourier_terms!(prob)
 lcl_u = map(x->chord_lift_coefficient(prob, x), y)
+dCl_u = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_u, y))./ wing_area(wing)
 
 prob.downwash_model = psuedosteady
 compute_collocation_points!(prob)
 compute_fourier_terms!(prob)
 lcl_ps = map(x->chord_lift_coefficient(prob, x), y)
+dCl_ps = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_ps, y))./ wing_area(wing)
 
 prob.downwash_model = extpsuedosteady
 compute_collocation_points!(prob)
 compute_fourier_terms!(prob)
 lcl_eps = map(x->chord_lift_coefficient(prob, x), y)
+dCl_eps = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_eps, y))./ wing_area(wing)
 
-figure()
-function phase(x)
-    return atan(imag(x)/ real(x)) * 180 / pi - 180
-end
+prob.downwash_model = strip_theory
+compute_collocation_points!(prob)
+compute_fourier_terms!(prob)
+lcl_st = map(x->chord_lift_coefficient(prob, x), y)
+dCl_st = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_st, y)) ./ wing_area(wing)
 
-plot(y, abs.(lcl_u), label="unsteady")
-plot(y, abs.(lcl_ps), label="psuedosteady")
-plot(y, abs.(lcl_eps), label="extpsuedosteady")
-title(L"Local lift abs (Rectangular AR4) $\omega d / U = 1$")
-xlabel(L"y")
-ylabel(L"ph(\frac{d}{dy} C_L)")
-legend()
+using DataFrames
+using CSVFiles
 
-println("CL is ", compute_lift_coefficient(prob))
+
+df = DataFrame(
+    y_positions=y,
+    strip=abs.(dCl_st),
+    psuedosteady=abs.(dCl_ps),
+    xfil=abs.(dCl_eps),
+    unsteady=abs.(dCl_u))
+save("reAR4_dCLy_k"*string(Int64(100*srf/4))*"_plunge_study.csv", df)
+
+
