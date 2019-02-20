@@ -1,10 +1,20 @@
-include("sclavounos.jl")
+#
+# SpanReducedFrequency.jl
+#
+# Copyright HJA Bird 2019
+#
+#	Studies responses of a wing oscillating at varying span reduced freq.
+#
+#============================================================================#
+
+push!(LOAD_PATH, "../src")
+using LiftingLineTheory
 
 semispan = 4
 aspect_ratio = 4
-wing = make_van_dyke_cusped(StraightAnalyticWing, aspect_ratio, semispan*2, 3)
+wing = LiftingLineTheory.make_van_dyke_cusped(StraightAnalyticWing, aspect_ratio, semispan*2, 3)
 srf = collect(0.001:0.1:8.02)
-println("Semispan = ", semispan, ", AR = ", aspect_ratio, ", area = ", wing_area(wing))
+println("Semispan = ", semispan, ", AR = ", aspect_ratio, ", area = ", area(wing))
 kvar = 3
 fterms = 8
 kinem = y->1#y^2 / semispan^2
@@ -21,9 +31,8 @@ for i = 1 : length(srf)
         num_terms = fterms,
         amplitude_fn = kinem)
     compute_collocation_points!(prob)
-    k_term3(prob, 0.1)
     compute_fourier_terms!(prob)
-    clst[i] = compute_lift_coefficient(prob)
+    clst[i] = lift_coefficient(prob)
 end
 println("DONE strip")
 
@@ -38,9 +47,8 @@ for i = 1 : length(srf)
         num_terms = fterms,
         amplitude_fn = kinem)
     compute_collocation_points!(prob)
-    k_term3(prob, 0.1)
     compute_fourier_terms!(prob)
-    cls[i] = compute_lift_coefficient(prob)
+    cls[i] = lift_coefficient(prob)
 end
 println("DONE psuedosteady")
 
@@ -50,14 +58,13 @@ for i = 1 : length(srf)
     fq = srfv / semispan
     prob = HarmonicULLT(
         fq, wing;
-        downwash_model = extpsuedosteady,
+        downwash_model = streamwise_filaments,
         pitch_plunge = kvar,
         num_terms = fterms,
         amplitude_fn = kinem)
     compute_collocation_points!(prob)
-    k_term3(prob, 0.1)
     compute_fourier_terms!(prob)
-    clt1[i] = compute_lift_coefficient(prob)
+    clt1[i] = lift_coefficient(prob)
 end
 println("DONE x fil")
 
@@ -72,9 +79,8 @@ for i = 1 : length(srf)
         num_terms = fterms,
         amplitude_fn = kinem)
     compute_collocation_points!(prob)
-    k_term3(prob, 0.1)
     compute_fourier_terms!(prob)
-    clu[i] = compute_lift_coefficient(prob)
+    clu[i] = lift_coefficient(prob)
 end
 println("DONE unsteady")
 

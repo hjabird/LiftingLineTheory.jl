@@ -1,4 +1,7 @@
-include("sclavounos.jl")
+push!(LOAD_PATH, "../src")
+
+using LiftingLineTheory
+
 println("Starting AR test")
 
 chord = 1
@@ -13,7 +16,7 @@ clst = Vector{Complex{Float64}}(undef, length(aspect_ratio))
 println("Starting")
 for i = 1 : length(aspect_ratio)
     ar = aspect_ratio[i]
-    wing = make_van_dyke_cusped(StraightAnalyticWing, ar, chord * ar, shape)
+    wing = LiftingLineTheory.make_van_dyke_cusped(StraightAnalyticWing, ar, chord * ar, shape)
     prob = HarmonicULLT(
         fq, wing;
         downwash_model = strip_theory,
@@ -21,16 +24,15 @@ for i = 1 : length(aspect_ratio)
         num_terms = fterms,
         amplitude_fn = kinem)
     compute_collocation_points!(prob)
-    k_term3(prob, 0.1)
     compute_fourier_terms!(prob)
-    clst[i] = compute_lift_coefficient(prob)
+    clst[i] = lift_coefficient(prob)
 end
 println("DONE strip")
 
 cls = Vector{Complex{Float64}}(undef, length(aspect_ratio))
 for i = 1 : length(aspect_ratio)
     ar = aspect_ratio[i]
-    wing = make_van_dyke_cusped(StraightAnalyticWing, ar, chord * ar, shape)
+    wing = LiftingLineTheory.make_van_dyke_cusped(StraightAnalyticWing, ar, chord * ar, shape)
     prob = HarmonicULLT(
         fq, wing;
         downwash_model = psuedosteady,
@@ -38,33 +40,31 @@ for i = 1 : length(aspect_ratio)
         num_terms = fterms,
         amplitude_fn = kinem)
     compute_collocation_points!(prob)
-    k_term3(prob, 0.1)
     compute_fourier_terms!(prob)
-    cls[i] = compute_lift_coefficient(prob)
+    cls[i] = lift_coefficient(prob)
 end
 println("DONE psuedosteady")
 
 clt1 = Vector{Complex{Float64}}(undef, length(aspect_ratio))
 for i = 1 : length(aspect_ratio)
     ar = aspect_ratio[i]
-    wing = make_van_dyke_cusped(StraightAnalyticWing, ar, chord * ar, shape)
+    wing = LiftingLineTheory.make_van_dyke_cusped(StraightAnalyticWing, ar, chord * ar, shape)
     prob = HarmonicULLT(
         fq, wing;
-        downwash_model = extpsuedosteady,
+        downwash_model = streamwise_filaments,
         pitch_plunge = kvar,
         num_terms = fterms,
         amplitude_fn = kinem)
     compute_collocation_points!(prob)
-    k_term3(prob, 0.1)
     compute_fourier_terms!(prob)
-    clt1[i] = compute_lift_coefficient(prob)
+    clt1[i] = lift_coefficient(prob)
 end
 println("DONE x fil")
 
 clu = Vector{Complex{Float64}}(undef, length(aspect_ratio))
 for i = 1 : length(aspect_ratio)
     ar = aspect_ratio[i]
-    wing = make_van_dyke_cusped(StraightAnalyticWing, ar, chord * ar, shape)
+    wing = LiftingLineTheory.make_van_dyke_cusped(StraightAnalyticWing, ar, chord * ar, shape)
     prob = HarmonicULLT(
         fq, wing;
         downwash_model = unsteady,
@@ -72,9 +72,8 @@ for i = 1 : length(aspect_ratio)
         num_terms = fterms,
         amplitude_fn = kinem)
     compute_collocation_points!(prob)
-    k_term3(prob, 0.1)
     compute_fourier_terms!(prob)
-    clu[i] = compute_lift_coefficient(prob)
+    clu[i] = lift_coefficient(prob)
 end
 println("DONE unsteady")
 

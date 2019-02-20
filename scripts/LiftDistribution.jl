@@ -1,12 +1,22 @@
-include("sclavounos.jl")
+#
+# LiftDistribution.jl
+#
+# Copyright HJA Bird 2019
+#
+#	Examines the lift distribution with respect to spanwise position.
+#
+#============================================================================#
+
+push!(LOAD_PATH, "../src")
+using LiftingLineTheory
 
 semispan = 2
 aspect_ratio = 4
-wing = make_rectangular(StraightAnalyticWing, aspect_ratio, semispan * 2)
+wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, aspect_ratio, semispan * 2)
 srf = 8
-area = wing_area(wing)
+wa = area(wing)
 
-println("Semispan = ", semispan, ", AR = ", aspect_ratio, ", area = ", area)
+println("Semispan = ", semispan, ", AR = ", aspect_ratio, ", area = ", wa)
 println("SRF = ", srf, ", omega = ", srf/semispan)
 
 y = collect(-semispan *0.99: semispan / 50 : semispan *0.99)
@@ -23,26 +33,26 @@ prob = HarmonicULLT(
 )
 compute_collocation_points!(prob)
 compute_fourier_terms!(prob)
-lcl_u = map(x->chord_lift_coefficient(prob, x), y)
-dCl_u = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_u, y))./ wing_area(wing)
+lcl_u = map(x->lift_coefficient(prob, x), y)
+dCl_u = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_u, y))./ area(wing)
 
 prob.downwash_model = psuedosteady
 compute_collocation_points!(prob)
 compute_fourier_terms!(prob)
-lcl_ps = map(x->chord_lift_coefficient(prob, x), y)
-dCl_ps = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_ps, y))./ wing_area(wing)
+lcl_ps = map(x->lift_coefficient(prob, x), y)
+dCl_ps = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_ps, y))./ area(wing)
 
-prob.downwash_model = extpsuedosteady
+prob.downwash_model = streamwise_filaments
 compute_collocation_points!(prob)
 compute_fourier_terms!(prob)
-lcl_eps = map(x->chord_lift_coefficient(prob, x), y)
-dCl_eps = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_eps, y))./ wing_area(wing)
+lcl_eps = map(x->lift_coefficient(prob, x), y)
+dCl_eps = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_eps, y))./ area(wing)
 
 prob.downwash_model = strip_theory
 compute_collocation_points!(prob)
 compute_fourier_terms!(prob)
-lcl_st = map(x->chord_lift_coefficient(prob, x), y)
-dCl_st = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_st, y)) ./ wing_area(wing)
+lcl_st = map(x->lift_coefficient(prob, x), y)
+dCl_st = map(x->x[1] * wing.chord_fn(x[2]), zip(lcl_st, y)) ./ area(wing)
 
 using DataFrames
 using CSVFiles

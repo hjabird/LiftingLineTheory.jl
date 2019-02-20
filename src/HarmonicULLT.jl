@@ -1,71 +1,19 @@
-import SpecialFunctions
+#
+# HarmonicULLT.jl
+#
+# Copyright HJA Bird 2019
+#
+#==============================================================================#
+
 import FastGaussQuadrature
 import HCubature
 
-@enum DownwashModel begin
-    psuedosteady = 1
-    extpsuedosteady = 2
-    unsteady = 3
-    strip_theory = 4
-end
-
-# Straight analytic wing
-#==============================================================================#
-mutable struct StraightAnalyticWing
-    semispan :: Real        # Half the full span of the wing
-    chord_fn :: Function    # Defined in [-semispan, semispan]
-
-    function StraightAnalyticWing(
-        semispan :: Real, chord_fn :: Function) 
-        new(semispan, chord_fn)
-    end
-end
-
-function make_rectangular(
-    ::Type{StraightAnalyticWing}, 
-    aspect_ratio :: Real, span :: Real ) 
-
-    fn = y -> span / aspect_ratio
-    semispan = span / 2
-    return StraightAnalyticWing(semispan, fn)
-end
-
-function make_elliptic(
-    ::Type{StraightAnalyticWing}, 
-    aspect_ratio :: Real, span :: Real )
-
-    semispan = span / 2
-    # We multiply by two since we want the sum of the LE + TE offsets.
-    fn = y -> (8 / (aspect_ratio * pi)) * sqrt(semispan^2 - y^2)
-    return StraightAnalyticWing(semispan, fn)
-end
-
-function make_van_dyke_cusped(
-    ::Type{StraightAnalyticWing},
-    aspect_ratio :: Real, span :: Real, n :: Int)
-
-    @assert(n >= 0, "N must be postive")
-    @assert(n < 7, "Only implemented for n < 7")
-    semispan = span / 2
-    kns = [1, 4/pi, 3/2, 16/(3 * pi), 15/8, 32/(5*pi), 32/16, 256/(35*pi)]
-    kn = kns[n + 1]
-    fn = y->2 * kn * semispan * (1 - y^2 / semispan^2)^(n/2) / aspect_ratio
-    return StraightAnalyticWing(semispan, fn)
-end
-
-function calculate_aspect_ratio(a :: StraightAnalyticWing)
-    area = wing_area(a)
-    return 4 * a.semispan ^ 2 / area
-end
-
-# Harmonic ULLT
-#==============================================================================#
 mutable struct HarmonicULLT
     angular_fq :: Real              # in rad / s
     free_stream_vel :: Real
 
     wing :: StraightAnalyticWing
-    amplitude_fn :: Function        # Currently unused.
+    amplitude_fn :: Function        # Amplitude of oscillation wrt/ span pos.
     pitch_plunge :: Int64           # Plunge = 3, Pitch = 5. Otherwise invalid.
 
     downwash_model :: DownwashModel # See DownwashModel defintion
@@ -94,11 +42,6 @@ mutable struct HarmonicULLT
     end
 end
 
-"""
-    d_heave(::HarmonicULLT, ::Real)
-
-Computes the normalised bound circulation on a harmonically plunging plate.
-"""
 function d_heave(
     a :: HarmonicULLT,
     y :: Real)
@@ -126,11 +69,6 @@ function d_heave_normalised(
     return num / den
 end
 
-"""
-    d_pitch(::HarmonicULLT, ::Real)
-
-Computes the normalised bound circulation on a harmonically pitching plate.
-"""
 function d_pitch(
     a :: HarmonicULLT,
     y :: Real)
@@ -147,12 +85,6 @@ function d_pitch(
     return num / den
 end
 
-"""
-    compute_collocation_points!(::HarmonicULLT)
-
-Computes the correct location of collocation points for the fourier
-approximation and applies to input HarmonicULLT
-"""
 function compute_collocation_points!(
     a :: HarmonicULLT)
 
@@ -167,12 +99,6 @@ function compute_collocation_points!(
     return
 end
 
-"""
-    theta_to_y(::HarmonicULLT, theta::Real)
-
-Converts angular location on wing span in [0, pi] to the global y 
-location in [-semispan, semispan]
-"""
 function theta_to_y(
     a :: HarmonicULLT,
     theta :: Real)
@@ -181,11 +107,6 @@ function theta_to_y(
     return a.wing.semispan * cos(theta)
 end
 
-"""
-    dtheta_dy(::HarmonicULLT, theta::Real)
-
-Computes the rate of change of theta with respect to global y.
-"""
 function dtheta_dy(
     a :: HarmonicULLT,
     y :: Real)
@@ -218,12 +139,6 @@ function dsintheta_dtheta(
     return dGamma_dt
 end
 
-"""
-    y_to_theta(::HarmonicULLT, y::Real)
-
-Converts the global y location in [-semispan, semispan] to the angular location 
-on wing span in [0, pi].
-"""
 function y_to_theta(
     a :: HarmonicULLT,
     y :: Real)
@@ -306,8 +221,8 @@ function integrate_gammaprime_k(
         integral = i1 + i2 + i3
     elseif( a.downwash_model == psuedosteady )
         integral = integrate_gammaprime_k_psuedosteady(a, y, k)
-    elseif( a.downwash_model == extpsuedosteady )
-        integral = integrate_gammaprime_k_ext_psuedosteady(a, y, k)
+    elseif( a.downwash_model == streamwise_filaments )
+        integral = integrate_gammaprime_k_streamwise_fil(a, y, k)
     elseif( a.downwash_model == strip_theory )
         integral = 0
     end
@@ -438,19 +353,19 @@ function integrate_gammaprime_k_psuedosteady(
     return integral
 end
 
-function integrate_gammaprime_k_ext_psuedosteady(
+function integrate_gammaprime_k_streamwise_fil(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
 
     theta_singular = y_to_theta(a, y)
     ssm_var = 1 # save evaluating 
-        # integrate_gammaprime_k_ext_psuedosteady_subint(a, 0, k)
+        # integrate_gammaprime_k_streamwise_fil_subint(a, 0, k)
     function integrand(theta_0)
         eta = theta_to_y(a, theta_0)
         singular = a.wing.semispan * cos((2*k +1)*theta_0) / (y - eta)
         non_singular = 
-            integrate_gammaprime_k_ext_psuedosteady_subint(a, y - eta, k)
+            integrate_gammaprime_k_streamwise_fil_subint(a, y - eta, k)
         return singular * (non_singular - ssm_var)
     end
 
@@ -469,7 +384,7 @@ function integrate_gammaprime_k_ext_psuedosteady(
         ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
 end
 
-function integrate_gammaprime_k_ext_psuedosteady_subint(
+function integrate_gammaprime_k_streamwise_fil_subint(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
@@ -523,12 +438,6 @@ function integro_diff_mtrx_coeff(
     return coeff
 end
 
-"""
-    compute_fourier_terms!(::HarmonicULLT)
-
-Computes the fourier terms representing the bound vorticity on the span of the 
-wing. Assumes collocation points have already been computed.
-"""
 function compute_fourier_terms!(
     a :: HarmonicULLT )
 
@@ -546,19 +455,19 @@ function compute_fourier_terms!(
     return
 end    
 
-function compute_lift_coefficient(
+function lift_coefficient(
     a :: HarmonicULLT )
 
     @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
         "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
 
-    w_area = wing_area(a.wing)
+    w_area = area(a.wing)
     if(a.pitch_plunge == 3)
         chord_cl_fn = associated_chord_cl_heave
     elseif(a.pitch_plunge == 5)
         chord_cl_fn = associated_chord_cl_pitch
     end
-    integrand = y->chord_lift_coefficient(a, y) * 
+    integrand = y->lift_coefficient(a, y) * 
         a.amplitude_fn(y) * a.wing.chord_fn(y)
     nodes, weights = FastGaussQuadrature.gausslegendre(70)
     pts = map(
@@ -569,7 +478,7 @@ function compute_lift_coefficient(
     return CL
 end
 
-function chord_lift_coefficient(
+function lift_coefficient(
     a :: HarmonicULLT,
     y :: Real)
 
@@ -646,120 +555,5 @@ function bound_vorticity(
     return sum
 end
 
-"""
-    theodorsen_fn(k::Real)
-
-Theodorsen's function C(k), where k is chord reduced frequency = omega c / 2 U.
-"""
-function theodorsen_fn(k :: Real)
-    @assert(k >= 0, "Chord reduced frequency should be positive.")
-
-    h21 = SpecialFunctions.hankelh2(1, k)
-    h20 = SpecialFunctions.hankelh2(0, k)
-    return h21 / (h21 + im * h20)
-end
-
-function wing_area(
-    a :: StraightAnalyticWing)
-
-    # Integrate chord from accross span.
-    return HCubature.hquadrature(a.chord_fn, -a.semispan, a.semispan)[1]
-end
-
-function linear_remap(
-    pointin :: Number,   weightin :: Number,
-    old_a :: Number,     old_b :: Number,
-    new_a :: Number,     new_b :: Number )
-
-    dorig = (pointin - old_a) / (old_b - old_a)
-    p_new = new_a + dorig * (new_b - new_a)
-    w_new = ((new_b - new_a) / (old_b - old_a)) * weightin
-    return p_new, w_new
-end
-
-#==============================================================================#
-#   EXPONENTIAL INTEGRAL                                                      
-#   Julia does not have a exponential integral implementation. This is 
-#   copied from 
-#   https://github.com/mschauer/Bridge.jl/blob/master/src/expint.jl            
-#   under MIT lisense. Credit to stevengj and mschauer.                                    
-
-using Base.MathConstants: eulergamma
-
-# n coefficients of the Taylor series of E₁(z) + log(z), in type T:
-function E₁_taylor_coefficients(::Type{T}, n::Integer) where T<:Number
-    n < 0 && throw(ArgumentError("$n ≥ 0 is required"))
-    n == 0 && return T[]
-    n == 1 && return T[-eulergamma]
-    # iteratively compute the terms in the series, starting with k=1
-    term::T = 1
-    terms = T[-eulergamma, term]
-    for k in 2:n
-        term = -term * (k-1) / (k * k)
-        push!(terms, term)
-    end
-    return terms
-end
-
-# inline the Taylor expansion for a given order n, in double precision
-macro E₁_taylor64(z, n::Integer)
-    c = E₁_taylor_coefficients(Float64, n)
-    taylor = :(@evalpoly zz)
-    append!(taylor.args, c)
-    quote
-        let zz = $(esc(z))
-            $taylor - log(zz)
-        end
-    end
-end
-
-# for numeric-literal coefficients: simplify to a ratio of two polynomials:
-import Polynomials
-# return (p,q): the polynomials p(x) / q(x) corresponding to E₁_cf(x, a...),
-# but without the exp(-x) term
-function E₁_cfpoly(n::Integer, ::Type{T}=BigInt) where T<:Real
-    q = Polynomials.Poly(T[1])
-    p = x = Polynomials.Poly(T[0,1])
-    for i in n:-1:1
-        p, q = x*p+(1+i)*q, p # from cf = x + (1+i)/cf = x + (1+i)*q/p
-        p, q = p + i*q, p     # from cf = 1 + i/cf = 1 + i*q/p
-    end
-    # do final 1/(x + inv(cf)) = 1/(x + q/p) = p/(x*p + q)
-    return p, x*p + q
-end
-macro E₁_cf64(z, n::Integer)
-    p, q = E₁_cfpoly(n, BigInt)
-    num_expr =  :(@evalpoly zz)
-    append!(num_expr.args, Float64.(Polynomials.coeffs(p)))
-    den_expr = :(@evalpoly zz)
-    append!(den_expr.args, Float64.(Polynomials.coeffs(q)))
-    quote
-        let zz = $(esc(z))
-            exp(-zz) * $num_expr / $den_expr
-        end
-    end
-end
-
-# exponential integral function E₁(z)
-function expint(z::Union{Float64,Complex{Float64}})
-    x² = real(z)^2
-    y² = imag(z)^2
-    if real(z) > 0 && x² + 0.233*y² ≥ 7.84 # use cf expansion, ≤ 30 terms
-        if (x² ≥ 546121) & (real(z) > 0) # underflow
-            return zero(z)
-        elseif x² + 0.401*y² ≥ 58.0 # ≤ 15 terms
-            if x² + 0.649*y² ≥ 540.0 # ≤ 8 terms
-                x² + y² ≥ 4e4 && return @E₁_cf64 z 4
-                return @E₁_cf64 z 8
-            end
-            return @E₁_cf64 z 15
-        end
-        return @E₁_cf64 z 30
-    else # use Taylor expansion, ≤ 37 terms
-        r² = x² + y²
-        return r² ≤ 0.36 ? (r² ≤ 2.8e-3 ? (r² ≤ 2e-7 ? @E₁_taylor64(z,4) :
-                                                       @E₁_taylor64(z,8)) :
-                                                       @E₁_taylor64(z,15)) :
-                                                       @E₁_taylor64(z,37)
-    end
-end
+# END HarmonicULLT.jl
+#============================================================================#
