@@ -3,9 +3,10 @@
 #
 # Copyright HJA Bird 2019
 #
-#==============================================================================#
+#============================================================================#
 
 import SpecialFunctions
+import FastGaussQuadrature
 
 #= Aerodynamics functions --------------------------------------------------=#
 """
@@ -32,6 +33,49 @@ function linear_remap(
     p_new = new_a + dorig * (new_b - new_a)
     w_new = ((new_b - new_a) / (old_b - old_a)) * weightin
     return p_new, w_new
+end
+
+#= Laplace transform -------------------------------------------------------=#
+function laplace(
+    function_in_t :: Function, s :: Real)
+
+    nodes, weights = FastGaussQuadrature.gausslaguerre(100)
+    integrand = x -> function_in_t(x / s) / s
+    evals = map(integrand, nodes)
+    integral = sum(weights .* evals)
+    return integral
+end
+
+#= Inverse Laplace transforms ----------------------------------------------=#
+function gaver_stehfest(
+    function_in_s :: Function, t :: Real, N :: Int)
+
+    # Gaver-Stehfest method.
+    @assert(hasmethod(function_in_s, (Float64,)), "Input method will not "*
+        "accept a F64 as argument in for Gaver-Stehfest inverse laplace.")
+    @assert(N > 0, "Taylor approximation of transform must have positive"*
+        " number of terms. (Given N <= 0)")
+    @assert((N%2) == 0, "N (number of terms) must be even.")
+
+    function Vk(k :: Int, N :: Int)
+        N2 = N / 2
+        term1i = (-1)^(k + N2)
+        term2i = mapreduce(
+            x->x^(N2) * factorial(2 * x) /
+                (factorial(N2 - x) * factorial(x) * factorial(x - 1) *
+                factorial(k - x) * factorial(2*x - k)),
+            +,
+            collect(floor((k+1)/2) : minimum((k, N/2)))
+        )
+        return term1i * term2i
+    end
+    term1 = log(2) / t
+    term2 = mapreduce(
+        x-> Vk(x, N) * function_in_s(x * term1),
+        +,
+        collect(1 : N)
+    )
+    return term1 * term2
 end
 
 #= Special functions -------------------------------------------------------=#
