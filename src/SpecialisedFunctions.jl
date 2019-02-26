@@ -22,8 +22,66 @@ function theodorsen_fn(k :: Real)
     return h21 / (h21 + im * h20)
 end
 
-#= Mappings from Real->Real ------------------------------------------------=#
+"""
+Generate a Wagner function of using a variable number of terms.
 
+A sum of a_i * exp(b_i * s) terms can be used to approximate Wagner's function.
+This is done by taking matching the fourier transform of the above with
+Theodorsen's function.
+
+The method currently used is very sensitive to its arguments and sometimes 
+produces complete garbage.
+"""
+function create_wagner_fn(num_terms :: Int, k_max :: Real)
+    @assert(num_terms > 0)
+    I = num_terms
+    lim_k_to_inf = 0.5  # Limit as k->infinity for theodorsen_fn
+    lim_k_to_zero = 1   # for theodorsen fn.
+
+    ai = Vector{Float64}(undef, I)
+    bi = Vector{Float64}(undef, I)
+    bi[1] = 0       # Required to satisfy k->0 limit
+    ai[1] = lim_k_to_zero
+    # Arbitrarily set
+    bi[2:end] = - collect(1:I-1) * k_max / (I - 1)
+    # Frequency collocation points - spread over the curve created on complex 
+    # plane
+    kn = collect( i / (2 * sqrt(I-2)) for i = 1 : I-2)
+    mat_inp = [(b, k) for k in kn, b in bi[2:end]]
+    matrix = Matrix{Float64}(undef, I-1, I-1)
+    matrix[1:I-2,:] = map(
+        x -> x[2]^2 * x[2] / (x[1]^2 + x[2]^2),
+        mat_inp)
+    matrix[end,:] .= 1
+    rhs_vec = vcat(imag.(theodorsen_fn.(kn)), lim_k_to_inf) .- lim_k_to_zero
+    ai[2:end] = matrix \ rhs_vec
+    function wagner_fn(s :: Real)
+        if s >= 0
+            return mapreduce(
+                x -> x[1] * exp(x[2] * s),
+                +,
+                zip(ai, bi) )
+        else
+            return 0
+        end
+    end
+    println("Ai = \t", ai)
+    println("Bi = \t", bi)
+    return wagner_fn
+end
+
+"""
+R.T. Jones' approximation of Wagner's function.
+
+Argument of s is normalised. For example s = U * t / b where 
+U is free stream vel, t is time since the step change and b is the semichord
+of the wing section.
+"""
+function wagner_fn(s :: Real)
+    return 1 - 0.165 * exp(-0.0455*s) - 0.335 * exp(-0.0455*s)
+end
+
+#= Mappings from Real->Real ------------------------------------------------=#
 function linear_remap(
     pointin :: Number,   weightin :: Number,
     old_a :: Number,     old_b :: Number,
