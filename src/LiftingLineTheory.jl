@@ -14,6 +14,7 @@ module LiftingLineTheory
 export
     DownwashModel,
 	HarmonicULLT,
+	TimeDomainULLT,
 	StraightAnalyticWing,
 	
 	# For getting results from ULLTs
@@ -34,8 +35,9 @@ export
 	
 # source files
 include("DownwashEnum.jl")			# An enum. No deps.
-include("SpecialisedFunctions.jl")	# Theodorsen etc. + Exponential integral
 include("StraightAnalyticWing.jl")	# Define wing  planform shape
 include("HarmonicULLT.jl")			# Harmonic ULLT
+include("SpecialisedFunctions.jl")	# Theodorsen etc. + Exponential integral
+include("TimeDomainULLT.jl")		# Time domain ULLT
 
 end

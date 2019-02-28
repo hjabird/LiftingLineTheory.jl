@@ -7,6 +7,8 @@
 
 import SpecialFunctions
 import FastGaussQuadrature
+import PyPlot
+import LinearAlgebra
 
 #= Aerodynamics functions --------------------------------------------------=#
 """
@@ -50,10 +52,10 @@ function create_wagner_fn(num_terms :: Int, k_max :: Real)
     mat_inp = [(b, k) for k in kn, b in bi[2:end]]
     matrix = Matrix{Float64}(undef, I-1, I-1)
     matrix[1:I-2,:] = map(
-        x -> x[2]^2 * x[2] / (x[1]^2 + x[2]^2),
+        x -> x[2]^2 / (x[1]^2 + x[2]^2),
         mat_inp)
     matrix[end,:] .= 1
-    rhs_vec = vcat(imag.(theodorsen_fn.(kn)), lim_k_to_inf) .- lim_k_to_zero
+    rhs_vec = vcat(real.(theodorsen_fn.(kn)), lim_k_to_inf) .- lim_k_to_zero
     ai[2:end] = matrix \ rhs_vec
     function wagner_fn(s :: Real)
         if s >= 0
@@ -70,6 +72,80 @@ function create_wagner_fn(num_terms :: Int, k_max :: Real)
     return wagner_fn
 end
 
+function create_wagner_fn2(num_terms :: Int, k_max :: Real)
+    @assert(num_terms > 0)
+    I = num_terms
+    lim_k_to_inf = 0.5  # Limit as k->infinity for theodorsen_fn
+    lim_k_to_zero = 1   # for theodorsen fn.
+
+    ai = Vector{Float64}(undef, I)
+    bi = Vector{Float64}(undef, I)
+    bi[1] = 0       # Required to satisfy k->0 limit
+    ai[1] = lim_k_to_zero
+    # Arbitrarily set
+    bi[2:end] = - collect(1:I-1) * k_max / (I - 1)
+    # Frequency collocation points - spread over the curve created on complex 
+    # plane
+    kn = collect( i / (8 * sqrt(I-2)) for i = 1 : I-2)
+    mat_inp_r = [(b, k) for k in kn[1:2:end], b in bi[2:end]]
+    mat_inp_i = [(b, k) for k in kn[2:2:end], b in bi[2:end]]
+    # Mat goes [real, imag, real, imag, .., lim_k_inf(real)]
+    println("kn = \t\t", kn)
+    matrix = Matrix{Float64}(undef, I-1, I-1)
+    matrix[1:2:I-2,:] = map(                # Real Part
+        x -> x[2]^2 / (x[1]^2 + x[2]^2),
+        mat_inp_r)
+    matrix[2:2:I-2,:] = map(                # Imaginary part
+        x -> -x[2]*x[1] / (x[1]^2 + x[2]^2),
+        mat_inp_i)
+    matrix[end,:] .= 1
+    rhs_vec = Vector{Float64}(undef, I-1)
+    a1_vec = Vector{Float64}(undef, I-1)
+    a1_vec[1:2:end] .= lim_k_to_zero    # real
+    a1_vec[end] = lim_k_to_zero         # lim_k_zero
+    a1_vec[2:2:end-1] .= 0              # imag
+    rhs_vec[1:2:end-1] = real.(theodorsen_fn.(kn[1:2:end])) # real
+    rhs_vec[2:2:end-1] = imag.(theodorsen_fn.(kn[2:2:end])) # imag
+    rhs_vec[end] = lim_k_to_inf         # lim_k_inf
+
+    println("A1 = \t\t", a1_vec)
+    println("rsh= \t\t", rhs_vec)
+    println("mat= \t\t", matrix)
+    println("cond(mat) = ", LinearAlgebra.cond(matrix))
+
+    ai[2:end] = matrix \ (rhs_vec - a1_vec)
+    function wagner_fn(s :: Real)
+        if s >= 0
+            return mapreduce(
+                x -> x[1] * exp(x[2] * s),
+                +,
+                zip(ai, bi) )
+        else
+            return 0
+        end
+    end
+    println("Ai = \t", ai)
+    println("Bi = \t", bi)
+
+    ks = collect(0.001: 0.002 : 4)
+    tr = real.(theodorsen_fn.(ks))
+    ti = imag.(theodorsen_fn.(ks))
+    fr = real.(map(k->mapreduce(x->im*k*x[1]/(im*k-x[2]), +, zip(ai, bi)), ks))
+    fi = imag.(map(k->mapreduce(x->im*k*x[1]/(im*k-x[2]), +, zip(ai, bi)), ks))
+    trd = real.(theodorsen_fn.(kn))
+    tid = imag.(theodorsen_fn.(kn))
+    frd = real.(map(k->mapreduce(x->im*k*x[1]/(im*k-x[2]), +, zip(ai, bi)), kn))
+    fid = imag.(map(k->mapreduce(x->im*k*x[1]/(im*k-x[2]), +, zip(ai, bi)), kn))
+    PyPlot.figure()
+    PyPlot.plot(tr, ti, "k-")
+    PyPlot.plot(fr, fi, "r-")
+    println(trd)
+    PyPlot.plot(trd, tid, "kx")
+    PyPlot.plot(frd, fid, "rx")
+
+    return wagner_fn
+end
+
 """
 R.T. Jones' approximation of Wagner's function.
 
@@ -79,6 +155,30 @@ of the wing section.
 """
 function wagner_fn(s :: Real)
     return 1 - 0.165 * exp(-0.0455*s) - 0.335 * exp(-0.0455*s)
+end
+
+function approximate_interaction_wrt_srf(
+    a :: HarmonicULLT)
+
+    ac = deepcopy(a)    # Avoid messing with original
+    srfs = vcat(collect(0.01: 0.05 : 1), collect(1.25: 0.25 : 4), collect(5:1.:8))
+    swps = collect(-0.9999 : 0.1: 0.9999) * a.wing.semispan
+    # Step 1 collect data.
+    zs = Matrix{Complex{Float64}}(undef, length(srfs), length(swps))
+    for i = 1 : length(srfs)
+        fq = srfs[i] * a.free_stream_vel / a.wing.semispan
+        a.angular_fq = fq
+        compute_collocation_points!(a)
+        compute_fourier_terms!(a)
+        zs[i, :] = map(y->f_eq(a, y), swps)
+    end
+    spline_r = Dierckx.Spline1D(srfs, real.(zs[:, Int64(floor(length(srfs)/2))]); bc="extrapolate")
+    spline_i = Dierckx.Spline1D(srfs, imag.(zs[:, Int64(floor(length(srfs)/2))]); bc="extrapolate")
+
+    PyPlot.figure()
+    kr = collect(0:0.1:10)
+    PyPlot.plot(spline_r.(kr), spline_i.(kr))
+    return
 end
 
 #= Mappings from Real->Real ------------------------------------------------=#
