@@ -8,6 +8,12 @@
 import FastGaussQuadrature
 import HCubature
 
+"""
+    HarmonicULLT
+
+A structure to represent an unsteady lifting-line theory problem involving 
+harmonic oscillation.
+"""
 mutable struct HarmonicULLT
     angular_fq :: Real              # in rad / s
     free_stream_vel :: Real
@@ -21,6 +27,30 @@ mutable struct HarmonicULLT
     fourier_terms :: Vector{Complex{Real}}
     collocation_points :: Vector{Real}  # In terms of theta in [0, pi]
 
+    """
+        Harmonic(angular_fq :: Real, wing :: StraightAnalyticWing; kwargs)
+
+    Create a Harmonic unsteady lifting-line theory problem.
+
+    Angular frequency (rad/s) is oscillation frequency.
+
+    Keyword arguments:
+        free_stream_vel :: Real (default = 1)   : free stream velocity
+        amplitude_fn :: Function (default y->1) : The amplitude of oscillation
+            at a given span location. Span location argument is in 
+            [-wing.semispan, wing.semispan]
+        pitch_plunge :: Kinematics (default=3)  : Liable to change in future.
+            plunge = 3, pitch = 5.
+        downwash_model :: DownwashModel (default=unsteady)  : downwash model to
+            use. Allows you to simplify the influence calculation.
+        num_terms :: Int64 (default = 8)    : Number of terms in the sine 
+            series used to represent the solution of the problem.
+        fourier_terms :: Vector{Float64} (Default undefined)    : Sine series
+            coeffs representing the solution. 
+        collocation_points :: Vector{float64} (default=undefined)   : The 
+            angular position in [0, 2*pi] that defines the location of the 
+            collocation points using in the solution proceedure.
+    """
     function HarmonicULLT(
         angular_fq :: Real,
         wing :: StraightAnalyticWing;
@@ -46,6 +76,7 @@ function d_heave(
     a :: HarmonicULLT,
     y :: Real)
 
+    # return d_heave_normalised(a, y) * a.amplitude_fn(y)
     @assert(abs(y) <= a.wing.semispan)
     norm_fq = a.angular_fq / a.free_stream_vel
     semichord = a.wing.chord_fn(y) / 2
@@ -251,16 +282,21 @@ function integrate_gammaprime_k_term1(
         return singular_part * singular_subtraction
     end
     
-    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)
+    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70) 
     pts2 = map(
         x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),
         zip(nodes1, weights1))
     pts1 = map(
         x->linear_remap(x[1], x[2], -1, 1, 0, theta_singular),
         zip(nodes1, weights1))
+	pts = vcat(first.(pts1), first.(pts2))
+	wts = vcat(last.(pts1), last.(pts2))
+	p = map( 
+		x->telles_cubic_remap(x[1], x[2], theta_singular, 0, pi),
+		zip(pts, wts))			
     integral =
-        sum(last.(pts1) .* map(integrand, first.(pts1))) +
-        sum(last.(pts2) .* map(integrand, first.(pts2))) +
+        sum(last.(p) .* map(integrand, first.(p))) +
+        #sum(last.(pts2) .* map(integrand, first.(pts2))) +
         singularity_coefficient * 0. # Glauert integral
 
 
@@ -329,16 +365,21 @@ function integrate_gammaprime_k_term3(
         return dsintheta_dtheta(a, theta_0, k) * k_term3(a, y - eta)
     end
 
-    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
+    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70) 
     pts2 = map(
         x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),
         zip(nodes1, weights1))
     pts1 = map(
         x->linear_remap(x[1], x[2], -1, 1, 0, theta_singular),
         zip(nodes1, weights1))
+	pts = vcat(first.(pts1), first.(pts2))
+	wts = vcat(last.(pts1), last.(pts2))
+	p = map( 
+		x->telles_cubic_remap(x[1], x[2], theta_singular, 0, pi),
+		zip(pts, wts))	
     integral =
-        sum(last.(pts1) .* map(integrand, first.(pts1))) +
-        sum(last.(pts2) .* map(integrand, first.(pts2))) 
+        sum(last.(pts1) .* map(integrand, first.(pts1))) #+
+        #sum(last.(pts2) .* map(integrand, first.(pts2))) 
     return integral
 end
 
@@ -441,6 +482,10 @@ end
 function compute_fourier_terms!(
     a :: HarmonicULLT )
 
+    @assert(length(a.collocation_points) == a.num_terms,
+        "Collocation point vector is incorrect length. Use "*
+        "compute_collocation_points!(::HarmonicULLT) before calling "*
+        "compute_fourier_terms!.")
     gamma_mtrx = gamma_terms_matrix(a)
     integro_diff_mtrx = 
         map(
@@ -455,6 +500,15 @@ function compute_fourier_terms!(
     return
 end    
 
+"""
+    lift_coefficient
+
+Obtain the lift coefficient associated with a problem.
+
+    lift_coefficient(a::HarmonicULLT) : Complex lift coeff for entire wing
+    lift_coefficient(a::HarmonicULLT, y :: Real) :: Complex lift coefficient for
+        a chord section on the wing.
+"""
 function lift_coefficient(
     a :: HarmonicULLT )
 

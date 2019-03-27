@@ -34,7 +34,7 @@ export
 	psuedosteady
 	
 # source files
-include("DownwashEnum.jl")			# An enum. No deps.
+include("DownwashModelEnum.jl")		# An enum. No deps.
 include("StraightAnalyticWing.jl")	# Define wing  planform shape
 include("HarmonicULLT.jl")			# Harmonic ULLT
 include("SpecialisedFunctions.jl")	# Theodorsen etc. + Exponential integral

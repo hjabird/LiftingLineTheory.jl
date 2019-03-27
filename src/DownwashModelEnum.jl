@@ -1,5 +1,5 @@
 #
-# DownwashEnum.jl
+# DownwashModelEnum.jl
 #
 # Copyright HJA Bird 2019
 #

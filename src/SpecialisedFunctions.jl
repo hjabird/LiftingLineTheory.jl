@@ -7,8 +7,8 @@
 
 import SpecialFunctions
 import FastGaussQuadrature
-import PyPlot
 import LinearAlgebra
+import PyPlot
 
 #= Aerodynamics functions --------------------------------------------------=#
 """
@@ -162,7 +162,8 @@ function approximate_interaction_wrt_srf(
 
     ac = deepcopy(a)    # Avoid messing with original
     srfs = vcat(collect(0.01: 0.05 : 1), collect(1.25: 0.25 : 4), collect(5:1.:8))
-    swps = collect(-0.9999 : 0.1: 0.9999) * a.wing.semispan
+    compute_collocation_points!(a)
+    swps = map(x->theta_to_y(a, x), a.collocation_points)
     # Step 1 collect data.
     zs = Matrix{Complex{Float64}}(undef, length(srfs), length(swps))
     for i = 1 : length(srfs)
@@ -172,12 +173,21 @@ function approximate_interaction_wrt_srf(
         compute_fourier_terms!(a)
         zs[i, :] = map(y->f_eq(a, y), swps)
     end
-    spline_r = Dierckx.Spline1D(srfs, real.(zs[:, Int64(floor(length(srfs)/2))]); bc="extrapolate")
-    spline_i = Dierckx.Spline1D(srfs, imag.(zs[:, Int64(floor(length(srfs)/2))]); bc="extrapolate")
 
     PyPlot.figure()
-    kr = collect(0:0.1:10)
-    PyPlot.plot(spline_r.(kr), spline_i.(kr))
+    colours = "rbgymckrbgymck"
+    markers ="xo^.v+"
+    for i = 1 : length(swps)
+        spline_r = Dierckx.Spline1D(srfs, real.(zs[:, i]); bc="extrapolate")
+        spline_i = Dierckx.Spline1D(srfs, imag.(zs[:, i]); bc="extrapolate")
+        kr = vcat(collect(0:0.02:4), collect(4.2:0.2:8))#, collect(10 : 1. :20))#, collect(50 :50. :250))
+        kc = [0.8, 4]
+        PyPlot.plot(spline_r.(kr), spline_i.(kr), colours[(i-1)%14 + 1] * "-d")
+        for j = 1 : length(kc)
+            PyPlot.plot(spline_r(kc[j]), spline_i(kc[j]), colours[(i-1)%14 + 1] * markers[(j-1)%6 + 1])
+            PyPlot.plot(spline_r(kc[j]), spline_i(kc[j]), colours[(i-1)%14 + 1] * markers[(j-1)%6 + 1])
+        end
+    end
     return
 end
 
@@ -191,6 +201,25 @@ function linear_remap(
     p_new = new_a + dorig * (new_b - new_a)
     w_new = ((new_b - new_a) / (old_b - old_a)) * weightin
     return p_new, w_new
+end
+
+function telles_cubic_remap(
+	pointin :: Number, 	weightin :: Number,
+	pointsingular :: Number,
+	lima:: Number, 		limb :: Number)
+	# Remap problem to [-1, 1]
+	p, w = linear_remap(pointin, weightin, lima, limb, -1, 1)
+	ps, ~ = linear_remap(pointsingular, 1, lima, limb, -1, 1)
+	# Telles cubic...
+	# Remapped singularity position
+	sprm = cbrt((ps - 1)*(ps + 1)*(ps + 1)) +
+		cbrt((ps -1)*(ps - 1)* (ps + 1)) + ps
+	# Allows us to calculate new point and weight positions
+	pn = ((p - sprm)^3 + sprm * (sprm^2 + 3)) / (3 * sprm^2 + 1)
+	wn = w * 3 * (sprm - p)^2 / (3 * sprm^2 + 1)	
+	# Map solution back to original domain
+	p, w = linear_remap(pn, wn, -1, 1, lima, limb)
+	return p, w	
 end
 
 #= Laplace transform -------------------------------------------------------=#
@@ -234,6 +263,10 @@ function gaver_stehfest(
         collect(1 : N)
     )
     return term1 * term2
+end
+
+function glauert_integral(k :: Real, alpha :: Real)
+    return pi * sin(abs(k)* alpha) / sin(alpha)
 end
 
 #= Special functions -------------------------------------------------------=#

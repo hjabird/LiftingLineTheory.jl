@@ -51,56 +51,139 @@ end
 
 function compute_transfer_function!(
     a :: TimeDomainULLT;
-    spanwise_interpolation_points=
-        collect(-a.wing.semispan*0.9999 : a.wing.semispan/100 : 
-        a.wing.semispan*0.9999),
-    span_reduced_frequencies= (collect(1 : 0.2 :5)./3).^8 )
+    spanwise_interpolation_points= a.collocation_points,
+    span_reduced_frequencies = (collect(1 : 0.2 :5)./3).^8 )
     
-    srfs = span_reduced_frequencies
-    sip = spanwise_interpolation_points
-    fqs = srfs .* a.free_stream_vel ./ a.wing.semispan
-    tlift_coeffs = Vector{Complex{Float64}}(undef, length(fqs))
-    swlift_coeffs = Matrix{Complex{Float64}}(undef, length(fqs), length(sip))
-    constcoeff = 1 / a.free_stream_vel
+    srfs = [0.00001, 2.] # Go beyond ~8 and F gets dodgy.
+    F, fqs, y_pts = generate_f_curves(a, srfs)
+    # Now generate the interaction function approx for each y point
+    #= form is sum( ( jka_i ) / ( jk - b_i ) ) where j is imag, k is fq var
+    and a_i and b_i are coefficient.   
+    In time domain this becomes sum( a_i exp(b_i * t))                      =#
+    nt = 4
+    as = Matrix{Float64}(undef, nt, length(y_pts))
+    bs = Matrix{Float64}(undef, nt, length(y_pts)) 
+    for i = 1 : length(y_pts)
+        fv = F[:, i]
+        # Problem here?
+        as[:, i], bs[:, i] = generate_interaction(fv, fqs)
+    end
+    # Now generate interpolation of our as & bs.
+    # We know bs are constant cross span.
+    # Use splines and assume symettric.
+    a_spl = Vector{Dierckx.Spline1D}(undef, nt)
+    b_spl = Vector{Dierckx.Spline1D}(undef, nt)
+    for i = 1 : nt
+        a_spl[i] = Dierckx.Spline1D(vcat(-y_pts, reverse(y_pts)), 
+            vcat(as[i, :], reverse(as[i, :])); bc="extrapolate")
+        b_spl[i] = Dierckx.Spline1D(vcat(-y_pts, reverse(y_pts)), 
+            vcat(bs[i, :], reverse(bs[i, :])); bc="extrapolate")
+    end
+    # And use all this to create une function!
+    function transfer_fn(t :: Real, y :: Real)
+        @assert(t >= 0.0)
+        as = map(spl->Dierckx.evaluate(spl, y), a_spl)
+        bs = map(spl->Dierckx.evaluate(spl, y), b_spl)
+        return mapreduce(x->x[1] * exp(x[2] * t), +, zip(as, bs))
+    end
+    a.transfer_fn = transfer_fn
+    return
+end
+
+"""
+    Generate the interaction curves at points on the wing span
+
+Returns (F, fqs, y_pts) where:
+F is matrix of F interaction fn values at F[i, j] is ith span reduced Frequency
+and jth spanwise positions
+fqs are frequencies of input span reduced freqyencies
+y_pts are the global y positions to take the F values at
+"""
+function generate_f_curves(
+    a :: TimeDomainULLT, srfs)
+
+    # 1) make a harmonic ULLT based on the TD one
+    hullt = HarmonicULLT(1, a.wing; free_stream_vel=a.free_stream_vel,
+        amplitude_fn = a.amplitude_fn, pitch_plunge=a.pitch_plunge,
+        downwash_model=a.downwash_model, num_terms=a.num_terms)
+    compute_collocation_points!(hullt)
+
+    # 2) decide the points frequencies and spanwise positions we're collecting
+    #   data on.
+    fqs = 0.5 .* srfs .* a.free_stream_vel ./ a.wing.semispan
+    y_pts = map(x->theta_to_y(hullt, x), hullt.collocation_points)
+    F = Matrix{Complex{Float64}}(undef, length(fqs), length(y_pts))
 
     for i = 1 : length(fqs)
-        fq = fqs[i]
-        prob = HarmonicULLT(
-            fq, a.wing, free_stream_vel=a.free_stream_vel,
-            amplitude_fn=a.amplitude_fn, pitch_plunge=a.pitch_plunge,
-            downwash_model=a.downwash_model, num_terms=a.num_terms)
-        compute_collocation_points!(prob)
-        compute_fourier_terms!(prob)
-        coeff = im * fq * constcoeff
-        # Total coeff:
-        tlift_coeffs[i] = lift_coefficient(prob) * coeff
-        # And the spanwise:
-        try
-            swlift_coeffs[i, :] = map(
-                y->lift_coefficient(prob, y) * coeff,
-                sip)
-        catch AmosException
-            error("AmosException thrown whilst evaluating lift coeffs wrt/"*
-                " span for harmonic ULLT. This might be caused by evaluating"*
-                " lift at a chord = 0 wingtip. Consider extrapolating tip"*
-                " lift coeff.")
+        hullt.angular_fq = fqs[i]
+        compute_fourier_terms!(hullt)
+        for j = 1 : length(y_pts)
+            F[i, j] = f_eq(hullt, y_pts[j])
         end
     end
-    # Now interpolate to generate fn.
-    it1sr = Dierckx.Spline1D(fqs, real.(tlift_coeffs); bc="extrapolate")
-    it1si = Dierckx.Spline1D(fqs, imag.(tlift_coeffs); bc="extrapolate")
-    it2sr = Dierckx.Spline2D(fqs, sip, real.(swlift_coeffs))
-    it2si = Dierckx.Spline2D(fqs, sip, imag.(swlift_coeffs))
-    function it(fq :: Real)
-       return it1sr(fq) + im * it1si(fq)
-    end
-    function it(fq :: Real, swp :: Real)
-        @assert(-a.wing.semispan <= swp <= a.wing.semispan, "Tried to "*
-            "lift function outside of wing.")
-        return it2s(fq) + im * it2si(fq)
-    end
-    a.transfer_fn = it
-    return
+
+    return (F, fqs, y_pts)
+end
+
+"""
+as[:, i], bs[:, i] = generate_interaction(F_values :: Vector{T}, frequencies
+    ::Vector)
+
+Compute the a_i and b_i of an approximation of the frequency response of the F
+function.
+"""
+function generate_interaction(F_values :: Vector{T},
+    frequencies :: Vector{S}
+    ) where {T<:Complex, S<:Real}
+    # See HJAB Notes 5 around pg.75
+
+    num_terms = length(frequencies)
+    @assert(num_terms >= 2)
+    @assert(length(F_values) == length(frequencies))
+    as = Vector{Float64}(undef, num_terms)
+    bs = Vector{Float64}(undef, num_terms)
+    #= 
+    Constraints:
+    1) We expect as fq->inf, F-> zero, so sum (a_i) = 0
+    2) We expect as fq->0, F->F(0) - this is important to us, so enforce as 
+    boundary condition. -> b_1 = 0, a_1 = F(0)
+
+    What we want:
+    - To select the remaining values of a_i and b_i that gives us the closest 
+    approximation of our F.
+    Possible methods:
+    - Collocation points with predefined b_i. Solve for A_i.
+        - How do we choose b_i, and k_j? We have to preselect fqs. Based on 
+        the expected shape of our F curves - ie, srfs below 8 are important. 
+        Very important below 4. Do we use real or imag?
+    - Some other kind of method?
+        - We calculating lots of F points ain't hard...
+
+    Collocation method:
+    =#
+    bs[1] = 0.;
+    as[1] = real(F_values[1])
+    # Choose collocations fqs and b values
+    fq_idxs = collect(2 : num_terms)
+    bs[2:end] = frequencies[fq_idxs]
+    ks = frequencies[fq_idxs[1:end-1]]
+    # Assemble matrix
+    mat = Matrix{Float64}(undef, num_terms-1, num_terms-1)
+    # Constraint that our a_i must sum to zero
+    mat[end, :] .= 1.
+    # Expressions for F = sum...
+    mat[1:end-1, :] = map(
+        i->ks[i[1]]^2 / (ks[i[1]]^2 + bs[i[2]]^2),
+        collect((i, j) for i in 1 : num_terms-2, j in 1 : num_terms-1)
+    )
+    rhs = Vector{Float64}(undef, num_terms-1)
+    rhs[1:end-1] = real.(F_values[fq_idxs[1:end-1]])
+    rhs[end] = 0.
+    rhs .-= as[1]
+    # Now we can solve:
+    as[2:end] = mat \ rhs
+    # And with luck we have a reasonable approximation of the input.
+    return as, bs
 end
 
 function lift_coefficient(

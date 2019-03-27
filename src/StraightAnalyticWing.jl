@@ -16,6 +16,11 @@ mutable struct StraightAnalyticWing
     end
 end
 
+"""
+    LiftingLineTheory.make_rectangular(type, aspect_ratio, span)
+
+Generate a rectangular wing of given type.
+"""
 function make_rectangular(
     ::Type{StraightAnalyticWing}, 
     aspect_ratio :: Real, span :: Real ) 
@@ -25,6 +30,11 @@ function make_rectangular(
     return StraightAnalyticWing(semispan, fn)
 end
 
+"""
+    LiftingLineTheory.make_elliptic(type, aspect_ratio, span)
+
+Generate an elliptic wing of given type.
+"""
 function make_elliptic(
     ::Type{StraightAnalyticWing}, 
     aspect_ratio :: Real, span :: Real )
@@ -35,6 +45,20 @@ function make_elliptic(
     return StraightAnalyticWing(semispan, fn)
 end
 
+"""
+    LiftingLineTheory.make_van_dyke_cusped(type, aspect_ratio, span, cusping_factor)
+
+Generate an wing with cusping according to the formula presented by Van Dyke 
+(Lifting-line theory as a singular purturbation problem, 1964, J. App. Math. & Mech.).
+Wing is of given type.
+
+cusping factor (int):
+    0: rectangular wing
+    1: elliptic
+    2: lenticular (pointy ends)
+    3: cusped 
+    4+: even more cusped (max implemented is 7)
+"""
 function make_van_dyke_cusped(
     ::Type{StraightAnalyticWing},
     aspect_ratio :: Real, span :: Real, n :: Int)
