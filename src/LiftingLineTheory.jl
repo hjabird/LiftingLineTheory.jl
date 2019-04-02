@@ -35,9 +35,10 @@ export
 	
 # source files
 include("DownwashModelEnum.jl")		# An enum. No deps.
-include("StraightAnalyticWing.jl")	# Define wing  planform shape
-include("HarmonicULLT.jl")			# Harmonic ULLT
-include("SpecialisedFunctions.jl")	# Theodorsen etc. + Exponential integral
-include("TimeDomainULLT.jl")		# Time domain ULLT
+include("ExponentialApproximant.jl")# TD<->FD approximation helper. No deps.
+include("StraightAnalyticWing.jl")	# Define wing  planform shape.
+include("HarmonicULLT.jl")			# Harmonic ULLT.
+include("SpecialisedFunctions.jl")	# Theodorsen etc. + Exponential integral.
+include("TimeDomainULLT.jl")		# Time domain ULLT.
 
 end

@@ -154,7 +154,7 @@ U is free stream vel, t is time since the step change and b is the semichord
 of the wing section.
 """
 function wagner_fn(s :: Real)
-    return 1 - 0.165 * exp(-0.0455*s) - 0.335 * exp(-0.0455*s)
+    return 1 - 0.165 * exp(-0.0455*s) - 0.335 * exp(-0.3*s)
 end
 
 function approximate_interaction_wrt_srf(

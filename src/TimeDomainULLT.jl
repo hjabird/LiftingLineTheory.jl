@@ -22,7 +22,7 @@ mutable struct TimeDomainULLT
     num_terms :: Int64              # Number of terms in fourier expansion
     fourier_terms :: Vector{Real}
     collocation_points :: Vector{Real}  # In terms of theta in [0, pi]
-	transfer_fn :: Function			# Frequency domain transfer function
+    transfer_fn :: ExponentialApproximant{Real}	# Frequency domain transfer function
 
     function TimeDomainULLT(
         time_fn :: Function,
@@ -36,8 +36,8 @@ mutable struct TimeDomainULLT
 		normalised_wake_considered = 10,
         fourier_terms = Vector{Float64}(undef, 1),
         collocation_points = Vector{Float64}(undef, 1),
-        transfer_fn = x->error("Transfer function not yet computed. Use"*
-            " compute_transfer_function!.")
+        transfer_fn = ExponentialApproximant(Vector{Real}(undef, 1), 
+                        Vector{Real}(undef, 1))
     )
        @assert(hasmethod(time_fn, (Float64,)))
        @assert(wing.semispan > 0, "Wing must have a positive span")
@@ -54,13 +54,13 @@ function compute_transfer_function!(
     spanwise_interpolation_points= a.collocation_points,
     span_reduced_frequencies = (collect(1 : 0.2 :5)./3).^8 )
     
-    srfs = [0.00001, 2.] # Go beyond ~8 and F gets dodgy.
+    srfs = [0.00001, 2., 4., 6.] # Go beyond ~8 and F gets dodgy.
     F, fqs, y_pts = generate_f_curves(a, srfs)
     # Now generate the interaction function approx for each y point
     #= form is sum( ( jka_i ) / ( jk - b_i ) ) where j is imag, k is fq var
     and a_i and b_i are coefficient.   
     In time domain this becomes sum( a_i exp(b_i * t))                      =#
-    nt = 4
+    nt = length(srfs)
     as = Matrix{Float64}(undef, nt, length(y_pts))
     bs = Matrix{Float64}(undef, nt, length(y_pts)) 
     for i = 1 : length(y_pts)
@@ -165,7 +165,7 @@ function generate_interaction(F_values :: Vector{T},
     as[1] = real(F_values[1])
     # Choose collocations fqs and b values
     fq_idxs = collect(2 : num_terms)
-    bs[2:end] = frequencies[fq_idxs]
+    bs[2:end] = -frequencies[fq_idxs]
     ks = frequencies[fq_idxs[1:end-1]]
     # Assemble matrix
     mat = Matrix{Float64}(undef, num_terms-1, num_terms-1)
@@ -187,13 +187,8 @@ function generate_interaction(F_values :: Vector{T},
 end
 
 function lift_coefficient(
-    a :: TimeDomainULLT, t :: Real; N :: Int = 10)
+    a :: TimeDomainULLT, t :: Real)
 
-    # Transfer input function to s-space
-    x_s = s->laplace(a.time_fn, s)
-    # Multiply through by transfer_fn
-    y_s = s->x_s(s) * a.transfer_fn(s)
-    # And return to the time domain
-    y_t = gaver_stehfest(y_s, t, N)
-    return y_t
+
+
 end
