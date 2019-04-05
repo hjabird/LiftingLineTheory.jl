@@ -5,8 +5,8 @@
 #
 #==============================================================================#
 
-import FFTW
-import Dierckx
+import FastGaussQuadrature
+import ForwardDiff
 
 mutable struct TimeDomainULLT
 	time_fn :: Function
@@ -22,7 +22,7 @@ mutable struct TimeDomainULLT
     num_terms :: Int64              # Number of terms in fourier expansion
     fourier_terms :: Vector{Real}
     collocation_points :: Vector{Real}  # In terms of theta in [0, pi]
-    transfer_fn :: ExponentialApproximant{Real}	# Frequency domain transfer function
+    transfer_fn_interp :: ExponentialApproximantInterp{Float64}	# Frequency domain transfer function
 
     function TimeDomainULLT(
         time_fn :: Function,
@@ -35,17 +35,22 @@ mutable struct TimeDomainULLT
 		normalised_sample_fq = 1000,
 		normalised_wake_considered = 10,
         fourier_terms = Vector{Float64}(undef, 1),
-        collocation_points = Vector{Float64}(undef, 1),
-        transfer_fn = ExponentialApproximant(Vector{Real}(undef, 1), 
-                        Vector{Real}(undef, 1))
+        collocation_points = Vector{Float64}(undef, 1)
     )
        @assert(hasmethod(time_fn, (Float64,)))
        @assert(wing.semispan > 0, "Wing must have a positive span")
        @assert(wing.chord_fn(0) >= 0, "Wing must have positive chord")
 
-       new(time_fn, free_stream_vel, wing, amplitude_fn, pitch_plunge,
+        transfer_fn_interp = ExponentialApproximantInterp{Float64}(
+            wing.semispan * [-0.99, 0.99],
+            Vector{ExponentialApproximant{Float64}}(
+                [ExponentialApproximant([0.], [0.]), 
+                ExponentialApproximant([0.], [0.])]),
+            wing.semispan
+        )
+        new(time_fn, free_stream_vel, wing, amplitude_fn, pitch_plunge,
         downwash_model, normalised_sample_fq, normalised_wake_considered, 
-        num_terms, fourier_terms, collocation_points, transfer_fn)
+        num_terms, fourier_terms, collocation_points, transfer_fn_interp)
     end
 end
 
@@ -60,33 +65,21 @@ function compute_transfer_function!(
     #= form is sum( ( jka_i ) / ( jk - b_i ) ) where j is imag, k is fq var
     and a_i and b_i are coefficient.   
     In time domain this becomes sum( a_i exp(b_i * t))                      =#
-    nt = length(srfs)
-    as = Matrix{Float64}(undef, nt, length(y_pts))
-    bs = Matrix{Float64}(undef, nt, length(y_pts)) 
+    nt = length(srfs)   # Number of terms in our sumation.
+    as = Matrix{Float64}(undef, nt, length(y_pts))  # The a_is
+    bs = Matrix{Float64}(undef, nt, length(y_pts))  # The b_is
     for i = 1 : length(y_pts)
         fv = F[:, i]
-        # Problem here?
         as[:, i], bs[:, i] = generate_interaction(fv, fqs)
     end
-    # Now generate interpolation of our as & bs.
-    # We know bs are constant cross span.
-    # Use splines and assume symettric.
-    a_spl = Vector{Dierckx.Spline1D}(undef, nt)
-    b_spl = Vector{Dierckx.Spline1D}(undef, nt)
-    for i = 1 : nt
-        a_spl[i] = Dierckx.Spline1D(vcat(-y_pts, reverse(y_pts)), 
-            vcat(as[i, :], reverse(as[i, :])); bc="extrapolate")
-        b_spl[i] = Dierckx.Spline1D(vcat(-y_pts, reverse(y_pts)), 
-            vcat(bs[i, :], reverse(bs[i, :])); bc="extrapolate")
-    end
     # And use all this to create une function!
-    function transfer_fn(t :: Real, y :: Real)
-        @assert(t >= 0.0)
-        as = map(spl->Dierckx.evaluate(spl, y), a_spl)
-        bs = map(spl->Dierckx.evaluate(spl, y), b_spl)
-        return mapreduce(x->x[1] * exp(x[2] * t), +, zip(as, bs))
-    end
-    a.transfer_fn = transfer_fn
+    y_pts = vcat(-y_pts, reverse(y_pts))
+    as = hcat(as, reverse(as; dims=2))
+    bs = hcat(bs, reverse(bs; dims=2))
+    fns = map(
+        i->ExponentialApproximant(as[:, i], bs[:, i]), 
+        1 : length(y_pts))
+    a.transfer_fn_interp = ExponentialApproximantInterp{Float64}(y_pts, fns, a.wing.semispan) 
     return
 end
 
@@ -187,8 +180,47 @@ function generate_interaction(F_values :: Vector{T},
 end
 
 function lift_coefficient(
+    a :: TimeDomainULLT, t :: Real, x :: Real, dt :: Real)
+    @assert(abs(x) < a.wing.semispan)
+    @assert(dt > 0)
+
+    result = mapreduce(
+        ti->lift_coefficient_step(a, t-ti, x) * 
+            ForwardDiff.derivative(a.time_fn, ti) * dt,
+        +,
+        0 : dt : t; init=0.0)
+    return result
+end
+
+function lift_coefficient_step(
     a :: TimeDomainULLT, t :: Real)
+    
+    function integrand(y)
+        return a.wing.chord_fn(y) * lift_coefficient_step(a, t, y)
+    end
+    w_area = area(a.wing)
+    if t > 0
+        nodes, weights = FastGaussQuadrature.gausslegendre(40)
+        pts = map(
+            x->linear_remap(x[1], x[2], -1, 1, -a.wing.semispan, a.wing.semispan),
+            zip(nodes, weights))
+        integral = sum(last.(pts) .* map(integrand, first.(pts)))/ w_area
+        res = integral
+    else
+        res = 0
+    end
+    return res
+end
 
-
-
+function lift_coefficient_step(
+    a :: TimeDomainULLT, t :: Real, x :: Real)
+    @assert(abs(x) < a.wing.semispan)
+    dwash = interpolate(a.transfer_fn_interp, x)
+    wagner = ExponentialApproximant([1., -0.165, -0.335], [0., -0.0455, -0.3])
+    if t > 0
+        res = td_eval(wagner, t) - duhamel_int(wagner, dwash, t)
+    else
+        res = 0
+    end
+    return res;
 end
