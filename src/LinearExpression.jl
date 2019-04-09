@@ -11,7 +11,7 @@
     LinExprTerm_x               # x
     LinExprTerm_x2              # x^2
     LinExprTerm_x3              # x^3
-    LinExprTerm_sqrt_cmxoc      # sqrt((c - x) / c) where c is chord
+    LinExprTerm_sqrt_cmxox      # sqrt((c - x) / x) where c is chord
     LinExprTerm_x_ln_4xmcoc     # x * ln((4*x - c) / c)
     LinExprTerm_x2_ln_4xmcoc    # x^2 * ln((4*x - c) / c)
 end
@@ -19,10 +19,19 @@ end
 mutable struct LinearExpressionTerm
     type :: LinearExpressionTermType
     coefficient :: Real
+    function LinearExpressionTerm(t::LinearExpressionTermType, coeff::Real)
+        new(t, coeff)
+    end
 end
 
 mutable struct LinearExpression
     terms :: Vector{LinearExpressionTerm}
+    function LinearExpression()
+        new(Vector{LinearExpressionTerm}(undef, 0))
+    end
+    function LinearExpression(a::Vector{LinearExpressionTerm})
+        new(a)
+    end
 end
 
 function simplify!(a::LinearExpression)
@@ -69,8 +78,8 @@ function evaluate(a::LinearExpressionTermType, x::Real, chord::Real)
         ret = x^2
     elseif a == LinExprTerm_x3
         ret = x^3
-    elseif a == LinExprTerm_sqrt_cmxoc       # sqrt((c - x) / c) where c is chord
-        ret = sqrt((chord - x) / chord)
+    elseif a == LinExprTerm_sqrt_cmxox       # sqrt((c - x) / x) where c is chord
+        ret = sqrt((chord - x) / x)
     elseif a == LinExprTerm_x_ln_4xmcoc      # x * ln((4*x - c) / c)
         ret = x * log((4 * x - chord) / chord)    
     elseif a == LinExprTerm_x2_ln_4xmcoc    # x^2 * ln((4*x - c) / c)
@@ -79,4 +88,22 @@ function evaluate(a::LinearExpressionTermType, x::Real, chord::Real)
         error("Undefined LineExpressionTermType.")
     end
     return ret
+end
+
+import Base
+function Base.:+(a::LinearExpression, b::LinearExpression)
+    ret = a
+    for i = 1 : length(b.terms)
+        push!(a.terms, b.terms[i])
+    end
+    simplify!(a)
+    return ret
+end
+
+function Base.:*(a::LinearExpression, b::Real)
+    c = deepcopy(a)
+    for i = 1 : length(a.terms)
+        c.terms[i].coefficient *= b 
+    end
+    return c
 end
