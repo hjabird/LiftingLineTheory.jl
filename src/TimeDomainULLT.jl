@@ -59,7 +59,7 @@ function compute_transfer_function!(
     spanwise_interpolation_points= a.collocation_points,
     span_reduced_frequencies = (collect(1 : 0.2 :5)./3).^8 )
     
-    srfs = [0.00001, 2., 4., 6.] # Go beyond ~8 and F gets dodgy.
+    srfs = [0.00001, 0.25, 0.5, 1., 2., 3., 5., 8.] # Go beyond ~8 and F gets dodgy.
     F, fqs, y_pts = generate_f_curves(a, srfs)
     # Now generate the interaction function approx for each y point
     #= form is sum( ( jka_i ) / ( jk - b_i ) ) where j is imag, k is fq var
@@ -80,6 +80,7 @@ function compute_transfer_function!(
         i->ExponentialApproximant(as[:, i], bs[:, i]), 
         1 : length(y_pts))
     a.transfer_fn_interp = ExponentialApproximantInterp{Float64}(y_pts, fns, a.wing.semispan) 
+    plot_transfer_fn_against_col(a.transfer_fn_interp, F, y_pts, fqs)
     return
 end
 
@@ -157,25 +158,27 @@ function generate_interaction(F_values :: Vector{T},
     bs[1] = 0.;
     as[1] = real(F_values[1])
     # Choose collocations fqs and b values
-    fq_idxs = collect(2 : num_terms)
-    bs[2:end] = -frequencies[fq_idxs]
-    ks = frequencies[fq_idxs[1:end-1]]
+    bs[2:end] = -frequencies[2:end]
+    ks = frequencies[2:end-1]
     # Assemble matrix
     mat = Matrix{Float64}(undef, num_terms-1, num_terms-1)
     # Constraint that our a_i must sum to zero
-    mat[end, :] .= 1.
+    mat[end, :] .= 1
     # Expressions for F = sum...
     mat[1:end-1, :] = map(
         i->ks[i[1]]^2 / (ks[i[1]]^2 + bs[i[2]]^2),
-        collect((i, j) for i in 1 : num_terms-2, j in 1 : num_terms-1)
+        collect((i, j) for i in 1 : num_terms-2, j in 2 : num_terms)
     )
     rhs = Vector{Float64}(undef, num_terms-1)
-    rhs[1:end-1] = real.(F_values[fq_idxs[1:end-1]])
+    rhs[1:end-1] = real.(F_values[2:end-1])
     rhs[end] = 0.
     rhs .-= as[1]
     # Now we can solve:
+    display(mat)
     as[2:end] = mat \ rhs
     # And with luck we have a reasonable approximation of the input.
+
+
     return as, bs
 end
 
@@ -223,4 +226,19 @@ function lift_coefficient_step(
         res = 0
     end
     return res;
+end
+
+function plot_transfer_fn_against_col(a, F, y_pts, fqs)
+    colour = "mrbgkmcy"
+    for i = 1 : Int64(floor(length(y_pts)/2))
+        yp = y_pts[i]
+        cidx = i%6 + 1
+        dwash = interpolate(a, yp)
+        dwashes = map(f->fd_eval(dwash, f), fqs)
+        println(colour[cidx]*"o")
+        PyPlot.plot(real.(dwashes), imag.(dwashes), colour[cidx]*"o")
+        dwashesCont = map(f->fd_eval(dwash, f), 0.00001:0.1:20)
+        PyPlot.plot(real.(dwashesCont), imag.(dwashesCont), colour[cidx]*"-")
+        PyPlot.plot(real.(F[:, i]), imag.(F[:, i]), colour[cidx]*"x")
+    end
 end
