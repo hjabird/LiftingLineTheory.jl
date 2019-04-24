@@ -140,43 +140,117 @@ function generate_interaction(F_values :: Vector{T},
     1) We expect as fq->inf, F-> zero, so sum (a_i) = 0
     2) We expect as fq->0, F->F(0) - this is important to us, so enforce as 
     boundary condition. -> b_1 = 0, a_1 = F(0)
-
-    What we want:
-    - To select the remaining values of a_i and b_i that gives us the closest 
-    approximation of our F.
-    Possible methods:
-    - Collocation points with predefined b_i. Solve for A_i.
-        - How do we choose b_i, and k_j? We have to preselect fqs. Based on 
-        the expected shape of our F curves - ie, srfs below 8 are important. 
-        Very important below 4. Do we use real or imag?
-    - Some other kind of method?
-        - We calculating lots of F points ain't hard...
-
-    Collocation method:
+    Use newton raphson to find the best as and bs
     =#
+    # Initial values
     bs[1] = 0.;
-    as[1] = real(F_values[1])
-    # Choose collocations fqs and b values
-    fq_idxs = collect(2 : num_terms)
-    bs[2:end] = -frequencies[fq_idxs]
-    ks = frequencies[fq_idxs[1:end-1]]
-    # Assemble matrix
-    mat = Matrix{Float64}(undef, num_terms-1, num_terms-1)
-    # Constraint that our a_i must sum to zero
-    mat[end, :] .= 1.
-    # Expressions for F = sum...
-    mat[1:end-1, :] = map(
-        i->ks[i[1]]^2 / (ks[i[1]]^2 + bs[i[2]]^2),
-        collect((i, j) for i in 1 : num_terms-2, j in 1 : num_terms-1)
-    )
-    rhs = Vector{Float64}(undef, num_terms-1)
-    rhs[1:end-1] = real.(F_values[fq_idxs[1:end-1]])
-    rhs[end] = 0.
-    rhs .-= as[1]
-    # Now we can solve:
-    as[2:end] = mat \ rhs
+    bs[2:end] = -frequencies[2:end]
+    as = real_collocation(F_values, frequencies, bs, as[1])
+
+    err = x->imaginary_error(F_values, frequencies, as, x)
+    err_grad = x->ForwardDiff.gradient(err, x)
+    for i = 1:100
+        bs = newton_raphson_iter(err, err_grad, bs)
+        as = real_collocation(F_values, frequencies, bs, as)
+        if !all(bs !== bs)  # AKA any NaN?
+            break
+        end
+    end
     # And with luck we have a reasonable approximation of the input.
     return as, bs
+end
+
+function newton_raphson_iter(
+    fn :: Function,
+    fn_grad :: Function,
+    initial_inpt :: Vector{T}
+    ) where T<:Real
+
+    @assert(hasmethod(fn, (Vector{T},)), "Input function should accept Vector")
+    @assert(hasmethod(fn_grad, (Vector{T},)), "Input gradient function "*
+        "should accept Vector")
+    display(initial_inpt)
+    evl = fn(initial_inpt)
+    grad = fn_grad(initial_inpt)
+    display(evl)
+    initial_inpt = initial_inpt - grad\evl
+    return initial_inpt
+end
+
+function real_collocation(
+    Fs :: Vector{A},
+    freqs :: Vector{B},
+    b_i :: Vector{C},
+    a_1 ::Real
+    ) where {A<:Complex, B<:Real, C<:Real} 
+    #= 
+    Constraints:
+    1) We expect as fq->inf, F-> zero, so sum (a_i) = 0
+    2) We expect as fq->0, F->F(0) - this is important to us, so enforce as 
+    boundary condition. -> b_1 = 0, a_1 = F(0)
+    =#
+
+    @assert(length(Fs) == length(freqs), "The list of complex downwashes and "*
+        "frequencies at which they were generated do not match length")
+    @assert(b_i[1] == 0, "b_i[1] must equal zero due to low freqency limit.")
+
+    # Choose collocations fqs and b values
+    ks = freqs[2:end-1]
+    # Assemble matrix
+    mat = real_approximation_matrix(ks, b_i)[:, 2:end]
+    mat = vcat(mat, ones(typeof(mat[1,1]), 1, size(mat)[2]))
+    rhs = real.(Fs[2:end-1])
+    rhs = vcat(rhs, 0)
+    rhs .-= a_1
+    # Now we can solve:
+    as = mat \ rhs
+    as = vcat(a_1, as)
+    return as
+end
+
+function imaginary_error(
+    Fs :: Vector{A},
+    freqs :: Vector{B},
+    a_i ::Vector{D},
+    b_i :: Vector{C}
+    ) where {A<:Complex, B<:Real, C<:Real, D<:Real} 
+
+    @assert(length(Fs) == length(freqs), "The list of complex downwashes and "*
+        "frequencies at which they were generated do not match length")
+    @assert(b_i[1] == 0, "b_i[1] must equal zero due to low freqency limit.")
+
+    mat = imag_approximation_matrix(freqs, b_i)
+    approx = mat * a_i
+    imag_err = imag.(Fs) - approx
+    return imag_err
+end
+
+function real_approximation_matrix(
+    k_i :: Vector{S},
+    b_i :: Vector{U}) where {S<:Real, U<:Real}
+
+    @assert(all(b_i .<= 0), "b_i values must be negative or 0")
+    @assert(all(k_i .>= 0), "Frequencies must be positive")
+
+    mat = map(
+        i->k_i[i[1]]^2 / (k_i[i[1]]^2 + b_i[i[2]]^2),
+        collect((i, j) for i in 1 : length(k_i), j in 1 : length(b_i))
+    )
+    return mat
+end
+
+function imag_approximation_matrix(
+    k_i :: Vector{S},
+    b_i :: Vector{U}) where {S<:Real, U<:Real}
+
+    @assert(all(b_i .<= 0), "b_i values must be negative or 0")
+    @assert(all(k_i .>= 0), "Frequencies must be positive")
+
+    mat = map(
+        i->-b_i[i[2]] * k_i[i[1]] / (k_i[i[1]]^2 + b_i[i[2]]^2),
+        collect((i, j) for i in 1 : length(k_i), j in 1 : length(b_i))
+    )
+    return mat
 end
 
 function lift_coefficient(
