@@ -36,7 +36,9 @@ export
 # source files
 include("DownwashModelEnum.jl")		# An enum. No deps.
 include("Interpolators1D.jl")
-include("ExponentialApproximant.jl")# TD<->FD approximation helper. Dep interps.
+include("FDTDExpApprox.jl")# TD<->FD approximation helper. Dep interps.
+include("FDTDTExpApprox.jl")# TD<->FD approximation helper. Dep interps.
+include("FDTDMixedApprox.jl")# TD<->FD approximation helper. Dep interps.
 include("StraightAnalyticWing.jl")	# Define wing  planform shape.
 include("HarmonicULLT.jl")			# Harmonic ULLT.
 include("SpecialisedFunctions.jl")	# Theodorsen etc. + Exponential integral.
