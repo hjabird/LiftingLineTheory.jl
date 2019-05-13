@@ -24,19 +24,19 @@ end
 
 function td_derivative(a::FDTDMixedApprox{T, R}) where {T<:Real, R<:Real}
     texp_deriv = td_derivative(a.texp_appox)
-    return FDTDMixedApprox(td_derivative(a.exp_approx) + first(texp_deriv), 
+    return FDTDMixedApprox(td_derivative(a.exp_approx) + first(texp_deriv),
         last(texp_deriv))
 end
 
 function td_integral(a::FDTDMixedApprox{T, R}) where {T<:Real, R<:Real}
     texp_int = td_integral(a.texp_appox)
-    return FDTDMixedApprox(td_integral(a.exp_approx) + first(texp_int), 
+    return FDTDMixedApprox(td_integral(a.exp_approx) + first(texp_int),
         last(texp_int))
 end
 
 function duhamel_int(step_res::FDTDExpApprox{T}, inducer::FDTDMixedApprox{R, S}, t::Real) where {T<:Real, R<:Real, S<:Real}
     return duhamel_int(step_res, inducer.exp_approx, t) +
-        duhamel_int(step_res, inducer.texp_appox, t)
+        duhamel_int(step_res, inducer.texp_approx, t)
 end
 
 function num_terms(a::FDTDMixedApprox{T, R}) where {T<:Real, R<:Real}
@@ -54,7 +54,7 @@ function FDTDMixedApproxInterp(
     approximants :: Vector{FDTDMixedApprox},
     semispan :: Real)
 
-    exp_a = FDTDExpApproxInterp(positions, 
+    exp_a = FDTDExpApproxInterp(positions,
         map(x->x.exp_approx, approximants), semispan)
     texp_a = FDTDTExpApproxInterp(positions,
         map(x->x.texp_approx, approximants), semispan)

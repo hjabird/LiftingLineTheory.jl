@@ -10,9 +10,9 @@
 push!(LOAD_PATH, "../src")
 using LiftingLineTheory
 
-semispan = 4
-aspect_ratio = 4
-wing = LiftingLineTheory.make_van_dyke_cusped(StraightAnalyticWing, aspect_ratio, semispan*2, 3)
+semispan = 2
+aspect_ratio = 2
+wing = LiftingLineTheory.make_van_dyke_cusped(StraightAnalyticWing, aspect_ratio, semispan*2, 0)
 srf = collect(0.001:0.1:8.02)
 println("Semispan = ", semispan, ", AR = ", aspect_ratio, ", area = ", area(wing))
 kvar = 3
@@ -97,7 +97,7 @@ df = DataFrame(
     psuedosteady=abs.(cls),
     xfil=abs.(clt1),
     unsteady=abs.(clu))
-save("cuAR4_srf_plunge_study.csv", df)
+save("elAR4_srf_plunge_study.csv", df)
 
 #=
 figure()

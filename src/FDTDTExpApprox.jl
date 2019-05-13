@@ -1,7 +1,7 @@
 #
 # FDTDTExpApprox.jl
 #
-# Exponential approximant (ie sum H(t) * t * a_i exp(b_i * t)), and an 
+# Exponential approximant (ie sum H(t) * t * a_i exp(b_i * t)), and an
 # interpolator for the approximant.
 #
 # Copyright HJA Bird 2019
@@ -26,7 +26,7 @@ function fd_eval(a::FDTDTExpApprox{T}, fq::Real) where T<:Real
     @assert(length(a.b_i) == length(a.a_i))
     @assert(length(a.b_i) == length(a.a_i))
     res = mapreduce(
-        x->im * fq * x[1] / (im * fq - x[2])^2, 
+        x->im * fq * x[1] / (im * fq - x[2])^2,
         +, zip(a.a_i, a.b_i); init=T(0))
     return res
 end
@@ -76,8 +76,8 @@ function duhamel_int(step_res::FDTDExpApprox{T}, inducer::FDTDTExpApprox{R}, t::
     result = mapreduce(
         i->mapreduce(
             j->integral(i, j),
-            +, 1 : num_terms(b)
-        ), +, 1 : num_terms(a)
+            +, 1 : num_terms(b); init=0
+        ), +, 1 : num_terms(a); init=0
     )
     return result;
 end
@@ -122,7 +122,7 @@ function FDTDTExpApproxInterp(
     @assert(issorted(positions),
         "Position[i] < Position[i+1] is required.")
         FDTDTExpApproxInterp(positions, approximants, semispan, false,
-        Vector{CubicSpline{Float64}}(undef, 0), 
+        Vector{CubicSpline{Float64}}(undef, 0),
         Vector{CubicSpline{Float64}}(undef, 0))
 end
 
@@ -134,7 +134,7 @@ function compute_interpolation!(a::FDTDTExpApproxInterp)
     @assert(all(map(num_terms, a.approximants) .== num_terms(a.approximants[1])),
         "All approximant must have equal numbers of terms. Num terms are "*
         string(map(num_terms, a.approximants))*".")
-    
+
     n_terms = num_terms(a.approximants[1])
     num_positions = length(a.positions)
     a_i = Vector{CubicSpline{Float64}}(undef, n_terms)

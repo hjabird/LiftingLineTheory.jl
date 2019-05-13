@@ -8,7 +8,7 @@
 import SpecialFunctions
 import FastGaussQuadrature
 import LinearAlgebra
-import PyPlot
+import Plots
 
 #= Aerodynamics functions --------------------------------------------------=#
 """
@@ -31,7 +31,7 @@ A sum of a_i * exp(b_i * s) terms can be used to approximate Wagner's function.
 This is done by taking matching the fourier transform of the above with
 Theodorsen's function.
 
-The method currently used is very sensitive to its arguments and sometimes 
+The method currently used is very sensitive to its arguments and sometimes
 produces complete garbage.
 """
 function create_wagner_fn(num_terms :: Int, k_max :: Real)
@@ -46,7 +46,7 @@ function create_wagner_fn(num_terms :: Int, k_max :: Real)
     ai[1] = lim_k_to_zero
     # Arbitrarily set
     bi[2:end] = - collect(1:I-1) * k_max / (I - 1)
-    # Frequency collocation points - spread over the curve created on complex 
+    # Frequency collocation points - spread over the curve created on complex
     # plane
     kn = collect( i / (2 * sqrt(I-2)) for i = 1 : I-2)
     mat_inp = [(b, k) for k in kn, b in bi[2:end]]
@@ -84,7 +84,7 @@ function create_wagner_fn2(num_terms :: Int, k_max :: Real)
     ai[1] = lim_k_to_zero
     # Arbitrarily set
     bi[2:end] = - collect(1:I-1) * k_max / (I - 1)
-    # Frequency collocation points - spread over the curve created on complex 
+    # Frequency collocation points - spread over the curve created on complex
     # plane
     kn = collect( i / (8 * sqrt(I-2)) for i = 1 : I-2)
     mat_inp_r = [(b, k) for k in kn[1:2:end], b in bi[2:end]]
@@ -136,12 +136,12 @@ function create_wagner_fn2(num_terms :: Int, k_max :: Real)
     tid = imag.(theodorsen_fn.(kn))
     frd = real.(map(k->mapreduce(x->im*k*x[1]/(im*k-x[2]), +, zip(ai, bi)), kn))
     fid = imag.(map(k->mapreduce(x->im*k*x[1]/(im*k-x[2]), +, zip(ai, bi)), kn))
-    PyPlot.figure()
-    PyPlot.plot(tr, ti, "k-")
-    PyPlot.plot(fr, fi, "r-")
+    Plots.figure()
+    Plots.plot(tr, ti, "k-")
+    Plots.plot(fr, fi, "r-")
     println(trd)
-    PyPlot.plot(trd, tid, "kx")
-    PyPlot.plot(frd, fid, "rx")
+    Plots.plot(trd, tid, "kx")
+    Plots.plot(frd, fid, "rx")
 
     return wagner_fn
 end
@@ -149,7 +149,7 @@ end
 """
 R.T. Jones' approximation of Wagner's function.
 
-Argument of s is normalised. For example s = U * t / b where 
+Argument of s is normalised. For example s = U * t / b where
 U is free stream vel, t is time since the step change and b is the semichord
 of the wing section.
 """
@@ -216,10 +216,10 @@ function telles_cubic_remap(
 		cbrt((ps -1)*(ps - 1)* (ps + 1)) + ps
 	# Allows us to calculate new point and weight positions
 	pn = ((p - sprm)^3 + sprm * (sprm^2 + 3)) / (3 * sprm^2 + 1)
-	wn = w * 3 * (sprm - p)^2 / (3 * sprm^2 + 1)	
+	wn = w * 3 * (sprm - p)^2 / (3 * sprm^2 + 1)
 	# Map solution back to original domain
 	p, w = linear_remap(pn, wn, -1, 1, lima, limb)
-	return p, w	
+	return p, w
 end
 
 #= Laplace transform -------------------------------------------------------=#
@@ -271,11 +271,11 @@ end
 
 #= Special functions -------------------------------------------------------=#
 
-#   EXPONENTIAL INTEGRAL                                                      
-#   Julia does not have a exponential integral implementation. This is 
-#   copied from 
-#   https://github.com/mschauer/Bridge.jl/blob/master/src/expint.jl            
-#   under MIT lisense. Credit to stevengj and mschauer.                                    
+#   EXPONENTIAL INTEGRAL
+#   Julia does not have a exponential integral implementation. This is
+#   copied from
+#   https://github.com/mschauer/Bridge.jl/blob/master/src/expint.jl
+#   under MIT lisense. Credit to stevengj and mschauer.
 
 using Base.MathConstants: eulergamma
 

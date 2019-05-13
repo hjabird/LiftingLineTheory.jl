@@ -8,6 +8,7 @@
 import FastGaussQuadrature
 import ForwardDiff
 import NLopt
+import PyPlot
 
 mutable struct TimeDomainULLT
 	time_fn :: Function
@@ -42,7 +43,7 @@ mutable struct TimeDomainULLT
         @assert(wing.semispan > 0, "Wing must have a positive span")
         @assert(wing.chord_fn(0) >= 0, "Wing must have positive chord")
 
-        
+
         transfer_fn_interp = FDTDMixedApproxInterp(
             wing.semispan * [-0.99, 0.99],
             Vector{FDTDMixedApprox}(
@@ -55,7 +56,7 @@ mutable struct TimeDomainULLT
             wing.semispan
         )
         new(time_fn, free_stream_vel, wing, amplitude_fn, pitch_plunge,
-        downwash_model, normalised_sample_fq, normalised_wake_considered, 
+        downwash_model, normalised_sample_fq, normalised_wake_considered,
         num_terms, fourier_terms, collocation_points, transfer_fn_interp)
     end
 end
@@ -64,7 +65,7 @@ function compute_transfer_function!(
     a :: TimeDomainULLT;
     spanwise_interpolation_points= a.collocation_points,
     span_reduced_frequencies = (collect(1 : 0.2 :5)./3).^8 )
-    
+
     srfs = [0.00001, 0.25, 0.5, 1., 2., 3., 5., 8.] # Go beyond ~8 and F gets dodgy.
     F, fqs, y_pts = generate_f_curves(a, srfs)
     #= Approximation:
@@ -78,7 +79,7 @@ function compute_transfer_function!(
     ds = Matrix{Float64}(undef, nt_texp, length(y_pts))  # The d_is
     for i = 1 : length(y_pts)
         fv = F[:, i]
-        as[:, i], bs[:, i], cs[:, i], ds[:, i] = 
+        as[:, i], bs[:, i], cs[:, i], ds[:, i] =
             generate_interaction(fv, fqs, nt_exp, nt_texp)
     end
     # And use all this to create une function!
@@ -88,10 +89,10 @@ function compute_transfer_function!(
     cs = hcat(cs, reverse(cs; dims=2))
     ds = hcat(ds, reverse(ds; dims=2))
     exp_interp = FDTDExpApproxInterp(y_pts,
-        map(i->FDTDExpApprox( as[:, i], bs[:, i]), 1 : length(y_pts)), 
+        map(i->FDTDExpApprox( as[:, i], bs[:, i]), 1 : length(y_pts)),
         a.wing.semispan)
     texp_interp = FDTDTExpApproxInterp(y_pts,
-        map(i->FDTDTExpApprox(cs[:, i], ds[:, i]), 1 : length(y_pts)), 
+        map(i->FDTDTExpApprox(cs[:, i], ds[:, i]), 1 : length(y_pts)),
         a.wing.semispan)
     interp_mixed = FDTDMixedApproxInterp(exp_interp, texp_interp)
     a.transfer_fn_interp = interp_mixed
@@ -157,10 +158,10 @@ function generate_interaction(F_values :: Vector{T},
     bs = Vector{Float64}(undef, nt_exp)
     cs = Vector{Float64}(undef, nt_texp)
     ds = Vector{Float64}(undef, nt_texp)
-    #= 
+    #=
     Constraints:
     1) We expect as fq->inf, F-> zero, so sum (a_i) = 0
-    2) We expect as fq->0, F->F(0) - this is important to us, so enforce as 
+    2) We expect as fq->0, F->F(0) - this is important to us, so enforce as
     boundary condition. -> b_1 = 0, a_1 = F(0)
     =#
     # Initial values:
@@ -187,17 +188,18 @@ function generate_interaction(F_values :: Vector{T},
 
     gradient =  vcat(bs[2:end],ds)
     minobj(vcat(bs[2:end], ds), gradient)
-    opt = NLopt.Opt(:LD_MMA, length(bs)-1+length(ds))
+	# LD_MMA, LD_SQP, LD_LBFGS
+    opt = NLopt.Opt(:LD_LBFGS, length(bs)-1+length(ds))
     opt.min_objective = minobj
     opt.upper_bounds = -1e-16
     opt.ftol_rel = 1e-16
     opt.maxtime = 1
-    
-    (~, xmin, reason) = NLopt.optimize!(opt, vcat(bs[2:end], ds))
-    println(opt.numevals)
-    println(reason)
-    bs[2:end] = xmin[1:length(bs)-1]
-    ds[:] = xmin[length(bs):end]
+
+    #(~, xmin, reason) = NLopt.optimize!(opt, vcat(bs[2:end], ds))
+    #println(opt.numevals)
+    #println(reason)
+    #bs[2:end] = xmin[1:length(bs)-1]
+    #ds[:] = xmin[length(bs):end]
     as, cs = real_collocation(F_values, frequencies, bs, ds, as[1])
 
     println("RESULT")
@@ -216,11 +218,11 @@ function real_collocation(
     b_i :: Vector{C},
     d_i :: Vector{D},
     a_1 ::Real
-    ) where {A<:Complex, B<:Real, C<:Real, D<:Real} 
-    #= 
+    ) where {A<:Complex, B<:Real, C<:Real, D<:Real}
+    #=
     Constraints:
     1) We expect as fq->inf, F-> zero, so sum (a_i) = 0
-    2) We expect as fq->0, F->F(0) - this is important to us, so enforce as 
+    2) We expect as fq->0, F->F(0) - this is important to us, so enforce as
     boundary condition. -> b_1 = 0, a_1 = F(0)
     =#
 
@@ -239,7 +241,7 @@ function real_collocation(
     ks = freqs[2:end-1]
     # Assemble matrix
     mat = real_approximation_matrix(ks, b_i, d_i)[:, 2:end]
-    hf_row = hcat(  ones(typeof(mat[1,1]), 1, length(b_i)-1), 
+    hf_row = hcat(  ones(typeof(mat[1,1]), 1, length(b_i)-1),
                     zeros(typeof(mat[1,1]), 1, length(d_i)))
     mat = vcat(mat, hf_row)
     rhs = real.(Fs[2:end-1])
@@ -265,7 +267,7 @@ function approximation_collocation_error(
     b_i :: Vector{C},
     c_i :: Vector{E},
     d_i :: Vector{F}
-    ) where {A<:Complex, B<:Real, C<:Real, D<:Real, E<:Real, F<:Real} 
+    ) where {A<:Complex, B<:Real, C<:Real, D<:Real, E<:Real, F<:Real}
     @assert(length(Fs) == length(freqs), "The list of complex downwashes and "*
         "frequencies at which they were generated do not match length")
     @assert(b_i[1] == 0, "b_i[1] must equal zero due to low freqency limit.")
@@ -287,7 +289,7 @@ function approximation_collocation_error(
     a_1 :: Real,
     b_i :: Vector{C},
     d_i :: Vector{F}
-    ) where {A<:Complex, B<:Real, C<:Real, F<:Real} 
+    ) where {A<:Complex, B<:Real, C<:Real, F<:Real}
     @assert(length(Fs) == length(freqs), "The list of complex downwashes and "*
         "frequencies at which they were generated do not match length")
     @assert(b_i[1] == 0, "b_i[1] must equal zero due to low freqency limit.")
@@ -330,7 +332,7 @@ function imag_approximation_matrix(
     k_i :: Vector{S},
     b_i :: Vector{U},
     d_i :: Vector{V}) where {S<:Real, U<:Real, V<:Real}
-    
+
     @assert(all(b_i .<= 0), "b_i values must be negative or 0")
     @assert(all(k_i .>= 0), "Frequencies must be positive")
     @assert(all(d_i .< 0), "d_i must be less than 0")
@@ -351,12 +353,24 @@ function imag_approximation_matrix(
 end
 
 function lift_coefficient(
-    a :: TimeDomainULLT, t :: Real, x :: Real, dt :: Real)
+    a :: TimeDomainULLT, t :: Real, dt :: Real)
+    @assert(dt > 0)
+
+    cl = mapreduce(
+	        ti->lift_coefficient_step(a, t-ti) *
+	            ForwardDiff.derivative(a.time_fn, ti) * dt,
+	        +,
+	        0 : dt : t; init=0.0)
+    return cl
+end
+
+function lift_coefficient(
+    a :: TimeDomainULLT, t :: Real, dt :: Real, y :: Real)
     @assert(abs(x) < a.wing.semispan)
     @assert(dt > 0)
 
     result = mapreduce(
-        ti->lift_coefficient_step(a, t-ti, x) * 
+        ti->lift_coefficient_step(a, t-ti, y) *
             ForwardDiff.derivative(a.time_fn, ti) * dt,
         +,
         0 : dt : t; init=0.0)
@@ -365,7 +379,7 @@ end
 
 function lift_coefficient_step(
     a :: TimeDomainULLT, t :: Real)
-    
+
     function integrand(y)
         return a.wing.chord_fn(y) * lift_coefficient_step(a, t, y)
     end
@@ -405,7 +419,7 @@ function plot_transfer_fn_against_col(a, F, y_pts, fqs)
         dwashes = map(f->fd_eval(dwash, f), fqs)
         PyPlot.plot(real.(dwashes), imag.(dwashes), colour[cidx]*"o")
         dwashesCont = map(f->fd_eval(dwash, f), vcat(0.00001:0.01:20, 21:1000))
-        PyPlot.plot(real.(dwashesCont), imag.(dwashesCont), colour[cidx]*"-")
+        PyPlot.plot(real.(dwashesCont), imag.(dwashesCont) , colour[cidx]*"-")
         PyPlot.plot(real.(F[:, i]), imag.(F[:, i]), colour[cidx]*"x")
     end
 end
