@@ -93,14 +93,14 @@ mutable struct FDTDExpApproxInterp
     approximants :: Vector{FDTDExpApprox{Float64}}
     semispan :: Real
     valid :: Bool
-    a_i_interp :: Vector{CubicSpline{Float64}}
-    b_i_interp :: Vector{CubicSpline{Float64}}
+    a_i_interp :: Vector{LinearInterpolator{Float64}}
+    b_i_interp :: Vector{LinearInterpolator{Float64}}
 end
 
 function FDTDExpApproxInterp(
     positions :: Vector{Float64},
     approximants :: Vector{FDTDExpApprox{Float64}},
-    semispan :: Real) where {T<:Real}
+    semispan :: Real)
 
     @assert(length(positions) == length(approximants),
         "Length of position and approximant vectors must be the same."*
@@ -116,8 +116,8 @@ function FDTDExpApproxInterp(
     @assert(issorted(positions),
         "Position[i] < Position[i+1] is required.")
     FDTDExpApproxInterp(positions, approximants, semispan, false,
-        Vector{CubicSpline{Float64}}(undef, 0), 
-        Vector{CubicSpline{Float64}}(undef, 0))
+        Vector{LinearInterpolator{Float64}}(undef, 0), 
+        Vector{LinearInterpolator{Float64}}(undef, 0))
 end
 
 function compute_interpolation!(a::FDTDExpApproxInterp)
@@ -131,13 +131,13 @@ function compute_interpolation!(a::FDTDExpApproxInterp)
     
     n_terms = num_terms(a.approximants[1])
     num_positions = length(a.positions)
-    a_i = Vector{CubicSpline{Float64}}(undef, n_terms)
-    b_i = Vector{CubicSpline{Float64}}(undef, n_terms)
+    a_i = Vector{LinearInterpolator{Float64}}(undef, n_terms)
+    b_i = Vector{LinearInterpolator{Float64}}(undef, n_terms)
     for i = 1 : n_terms
         an = map(x->x.a_i[i], a.approximants)
         bn = map(x->x.b_i[i], a.approximants)
-        a_i[i] = CubicSpline{Float64}(a.positions, an)
-        b_i[i] = CubicSpline{Float64}(a.positions, bn)
+        a_i[i] = LinearInterpolator{Float64}(a.positions, an)
+        b_i[i] = LinearInterpolator{Float64}(a.positions, bn)
     end
     a.a_i_interp = a_i
     a.b_i_interp = b_i

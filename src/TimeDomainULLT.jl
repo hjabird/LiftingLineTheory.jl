@@ -66,13 +66,14 @@ function compute_transfer_function!(
     spanwise_interpolation_points= a.collocation_points,
     span_reduced_frequencies = (collect(1 : 0.2 :5)./3).^8 )
 
-    srfs = [0.00001, 0.25, 0.5, 1., 2., 3., 5., 8.] # Go beyond ~8 and F gets dodgy.
+    #srfs = [0.00001, 0.1, 0.2, 0.35, 0.5, 0.75, 1., 1.5, 2., 2.5, 3., 3.5, 4., 5., 6., 7., 8., 9., 10.] # Go beyond ~8 and F gets dodgy.
+    srfs = [0.00001, 0.2, 0.5, 1., 2., 3.5, 5., 7., 9., 12., 15., 18., 24.] # Go beyond ~8 and F gets dodgy.
     F, fqs, y_pts = generate_f_curves(a, srfs)
     #= Approximation:
     We are approximating as Sum(a_i * exp(b_i * t)) + Sum(c_i * t * exp(d_i *t))
     in the time domain.  =#
-    nt_exp = 8 #Int64(ceil(length(srfs))/2)        # The exp(b_i t) terms
-    nt_texp = 0 #Int64(length(srfs)-nt_exp)        # The t * exp(d_i t) terms
+    nt_exp = 6 #Int64(ceil(length(srfs))/2)        # The exp(b_i t) terms
+    nt_texp = 4 #Int64(length(srfs)-nt_exp)        # The t * exp(d_i t) terms
     as = Matrix{Float64}(undef, nt_exp, length(y_pts))  # The a_is
     bs = Matrix{Float64}(undef, nt_exp, length(y_pts))  # The b_is
     cs = Matrix{Float64}(undef, nt_texp, length(y_pts))  # The c_is
@@ -121,14 +122,21 @@ function generate_f_curves(
     # 2) decide the points frequencies and spanwise positions we're collecting
     #   data on.
     fqs = 0.5 .* srfs .* a.free_stream_vel ./ a.wing.semispan
-    y_pts = map(x->theta_to_y(hullt, x), hullt.collocation_points)
+    #y_pts = map(x->theta_to_y(hullt, x), hullt.collocation_points)
+    y_pts = reverse(collect(0.025:0.05:0.99)) * a.wing.semispan
+    #y_pts = reverse(collect(0.0001:0.2:0.99)) * a.wing.semispan
     F = Matrix{Complex{Float64}}(undef, length(fqs), length(y_pts))
 
     for i = 1 : length(fqs)
         hullt.angular_fq = fqs[i]
         compute_fourier_terms!(hullt)
         for j = 1 : length(y_pts)
-            F[i, j] = f_eq(hullt, y_pts[j])
+            # See notes #6 pg 43.
+            if hullt.pitch_plunge == 3
+                F[i, j] = f_eq(hullt, y_pts[j])# * im * fqs[i] / (im * fqs[i])
+            elseif hullt.pitch_plunge == 5
+                F[i, j] = f_eq(hullt, y_pts[j]) * im * fqs[i]
+            end
         end
     end
 
@@ -183,23 +191,24 @@ function generate_interaction(F_values :: Vector{T},
         end
         errs = approximation_collocation_error(
             F_values, frequencies, a_i[1], b_i, d_i)
-        return sum(abs.(errs).^2)
+        return sum(abs.(errs).^2) + abs(sum(a_i))*10^6
     end
 
     gradient =  vcat(bs[2:end],ds)
     minobj(vcat(bs[2:end], ds), gradient)
-	# LD_MMA, LD_SQP, LD_LBFGS
-    opt = NLopt.Opt(:LD_LBFGS, length(bs)-1+length(ds))
+	# LD_MMA, LD_SLSQP, LD_LBFGS
+    opt = NLopt.Opt(:LD_SLSQP, length(bs)-1+length(ds))
     opt.min_objective = minobj
     opt.upper_bounds = -1e-16
+    opt.lower_bounds = -20
     opt.ftol_rel = 1e-16
-    opt.maxtime = 1
+    opt.maxtime = 5
 
-    #(~, xmin, reason) = NLopt.optimize!(opt, vcat(bs[2:end], ds))
-    #println(opt.numevals)
-    #println(reason)
-    #bs[2:end] = xmin[1:length(bs)-1]
-    #ds[:] = xmin[length(bs):end]
+    (~, xmin, reason) = NLopt.optimize!(opt, vcat(bs[2:end], ds))
+    println(opt.numevals)
+    println(reason)
+    bs[2:end] = xmin[1:length(bs)-1]
+    ds[:] = xmin[length(bs):end]
     as, cs = real_collocation(F_values, frequencies, bs, ds, as[1])
 
     println("RESULT")
@@ -238,13 +247,14 @@ function real_collocation(
     @assert(allunique(freqs), "All collocation frequencies must be unique.")
 
     # Choose collocations fqs and b values
-    ks = freqs[2:end-1]
+    ks = (freqs[1:length(b_i)+length(d_i)])[2:end-1]
+    #ks = (freqs[1:length(b_i)+length(d_i)])[2:end]
     # Assemble matrix
     mat = real_approximation_matrix(ks, b_i, d_i)[:, 2:end]
     hf_row = hcat(  ones(typeof(mat[1,1]), 1, length(b_i)-1),
                     zeros(typeof(mat[1,1]), 1, length(d_i)))
     mat = vcat(mat, hf_row)
-    rhs = real.(Fs[2:end-1])
+    rhs = real.(Fs[2:length(b_i) + length(d_i) - 1])
     rhs = vcat(rhs, 0)
     rhs .-= a_1
     # Now we can solve:
@@ -252,11 +262,21 @@ function real_collocation(
     try
         lhs = mat \ rhs
     catch
+        println("MATRIX:")
         display(mat)
+        println("RHS:")
+        display(rhs)
+        println("b_i:")
+        display(b_i)
+        println("d_i:")
+        display(d_i)
+        println("ks:")
+        display(ks)
+        error("ACH NOO!")
         throw
     end
-    as = vcat(a_1, lhs[1:length(b_i)-1])
-    cs = lhs[length(b_i):end]
+    as = clamp.(vcat(a_1, lhs[1:length(b_i)-1]), -10*abs(a_1), 10*abs(a_1))
+    cs = clamp.(lhs[length(b_i):end], -abs(a_1), abs(a_1))
     return as, cs
 end
 
@@ -305,9 +325,9 @@ function approximation_collocation_error(
 end
 
 function real_approximation_matrix(
-    k_i :: Vector{S},
+    k_i :: Vector{<:Real},
     b_i :: Vector{U},
-    d_i :: Vector{V}) where {S<:Real, U<:Real, V<:Real}
+    d_i :: Vector{<:Real}) where {U<:Real}
 
     @assert(all(b_i .<= 0), "b_i values must be negative or 0")
     @assert(all(k_i .>= 0), "Frequencies must be positive")
@@ -329,9 +349,9 @@ function real_approximation_matrix(
 end
 
 function imag_approximation_matrix(
-    k_i :: Vector{S},
+    k_i :: Vector{<:Real},
     b_i :: Vector{U},
-    d_i :: Vector{V}) where {S<:Real, U<:Real, V<:Real}
+    d_i :: Vector{<:Real}) where {U<:Real}
 
     @assert(all(b_i .<= 0), "b_i values must be negative or 0")
     @assert(all(k_i .>= 0), "Frequencies must be positive")
@@ -403,7 +423,7 @@ function lift_coefficient_step(
     dwash = interpolate(a.transfer_fn_interp, x)
     wagner = FDTDExpApprox([1., -0.165, -0.335], [0., -0.0455, -0.3])
     if t > 0
-        res = td_eval(wagner, t) - duhamel_int(wagner, dwash, t)
+        res = td_eval(wagner, t) - duhamel_int(wagner, dwash, t)    # UNSURE ------------------------------------------------------------------------------------------------------------------
     else
         res = 0
     end
@@ -422,4 +442,6 @@ function plot_transfer_fn_against_col(a, F, y_pts, fqs)
         PyPlot.plot(real.(dwashesCont), imag.(dwashesCont) , colour[cidx]*"-")
         PyPlot.plot(real.(F[:, i]), imag.(F[:, i]), colour[cidx]*"x")
     end
+    PyPlot.ylabel("Im(Downwash)", fontsize=20)
+    PyPlot.xlabel("Re(Downwash)", fontsize=20)
 end
