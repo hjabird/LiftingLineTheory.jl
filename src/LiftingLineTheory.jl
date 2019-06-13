@@ -32,10 +32,12 @@ export
 	streamwise_filaments,
 	psuedosteady
 	
+using CVortex
+import ForwardDiff, WriteVTK
 # source files
 include("DownwashEnum.jl")			# An enum. No deps.
 include("SpecialisedFunctions.jl")	# Theodorsen etc. + Exponential integral
 include("StraightAnalyticWing.jl")	# Define wing  planform shape
 include("HarmonicULLT.jl")			# Harmonic ULLT
-
+include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
 end

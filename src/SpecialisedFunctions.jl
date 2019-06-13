@@ -93,6 +93,20 @@ function linear_remap(
     return p_new, w_new
 end
 
+function linear_remap(
+    pointin :: Vector{<:Number},   weightin :: Vector{<:Number},
+    old_a :: Number,     old_b :: Number,
+    new_a :: Number,     new_b :: Number )
+    @assert(length(pointin)==length(weightin))
+    pout = deepcopy(pointin)
+    wout = deepcopy(weightin)
+    for i = 1 : length(pointin)
+        pout[i], wout[i] = linear_remap(pointin[i], weightin[i], 
+            old_a, old_b, new_a, new_b)
+    end
+    return pout, wout
+end
+
 #= Laplace transform -------------------------------------------------------=#
 function laplace(
     function_in_t :: Function, s :: Real)
