@@ -114,9 +114,9 @@ function foil_induced_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})
     points, weights = FastGaussQuadrature.gausslegendre(50)
     vortex_pos = foil_points(a, points)
     weights .*= a.foil.semichord
-    strengths = map(x->bound_vorticity_density(a, x), points)
+    strengths = map(x->bound_vorticity_density(a, x), points).*weights
     kernel = winckelmans_regularisation()
-    vels = particle_induced_velocity(vortex_pos, strengths, mes_pnts, 
+    vels = -1 .*particle_induced_velocity(vortex_pos, strengths, mes_pnts, 
         kernel, a.reg_dist)    
     return vels
 end
@@ -124,7 +124,7 @@ end
 function te_wake_particle_velocities(a::LAUTAT)
     reg_dist = a.reg_dist
     kernel = winckelmans_regularisation()
-    vel_self = particle_induced_velocity(a.te_particles.positions,
+    vel_self = -1 .*particle_induced_velocity(a.te_particles.positions,
         a.te_particles.vorts, a.te_particles.positions, a.regularisation, reg_dist)
     vel_foil = foil_induced_vel(a, a.te_particles.positions)
     vels = vel_self + vel_foil
@@ -136,7 +136,7 @@ end
 function vel_normal_to_foil_surface(a::LAUTAT, mes_pnts::Vector{<:Real})
     @assert(all(-1 .<= mes_pnts .<= 1), "Foil in [-1,1]")
     fpoints = foil_points(a, mes_pnts)
-    wake_vels = particle_induced_velocity(a.te_particles.positions, 
+    wake_vels =-1 .* particle_induced_velocity(a.te_particles.positions, 
         a.te_particles.vorts, fpoints, a.regularisation, a.reg_dist)
     ext_vels = a.U
     alpha = a.kinematics.AoA(a.current_time)
@@ -219,24 +219,17 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
     rot = [cos(alpha) -sin(alpha); sin(alpha) cos(alpha)]
     function I_uk_integrand(theta::Vector{<:Real})
         foil_pos = -cos.(theta)
-        println("THetas: ", theta)
         foil_coords = foil_points(a, foil_pos)
-        println("Coords: ", foil_coords)
-        println("Vort pos: ", posn)
         vels = mapreduce(
-            i->(rot * particle_induced_velocity(posn, 1., foil_coords[i,:], a.regularisation, a.reg_dist))',
+            i->(rot * (-1 .*particle_induced_velocity(posn, 1., foil_coords[i,:], a.regularisation, a.reg_dist)))',
             vcat, 1 : length(qpoints))
-        println("Vels: ", vels)
-        normal_vel = vels[:, 1].*map(a.foil.camber_slope, foil_pos) .- vels[:,2]
-        return normal_vel .* (cos.(theta).-1) * 2. * a.foil.semichord
+        normal_vel = vels[:,1].*map(a.foil.camber_slope, foil_pos) .- vels[:,2]
+        return normal_vel .* (cos.(theta).-1) * 2 * a.foil.semichord
     end
     I_uk = sum(I_uk_integrand(qpoints) .* qweights)
     # And now work out the vorticity
-    println("I_uk: ", I_uk)
-    println("Ik ", I_k)
     vort = - (I_k + total_te_vorticity(a)) / (1 + I_uk)
     a.te_particles.vorts[end] = vort
-    println("Vort p: ", vort)
     return
 end
 
@@ -257,9 +250,45 @@ function advance_one_step(a::LAUTAT)
     a.current_time += a.dt
     shed_new_te_particle_with_zero_vorticity!(a)
     adjust_last_shed_te_particle_for_kelvin_condition!(a)
-    a.current_fourier_terms = compute_fourier_terms(a)
     a.last_fourier_terms = a.current_fourier_terms
+    a.current_fourier_terms = compute_fourier_terms(a)
     return
+end
+
+function leading_edge_suction_force(a::LAUTAT, density::Real)
+    @assert(length(a.current_fourier_terms)==a.num_fourier_terms,
+        "Fourier term vector length = "*string(length(a.current_fourier_terms))*
+        " does not equal expected number of terms "*string(a.num_fourier_terms)
+        *". Has this simulation been run yet?")
+    return (a.U[1]^2 + a.U[2]^2) * pi * density * 2 * a.foil.semichord *
+        a.current_fourier_terms[1]^2
+end
+
+function aerofoil_normal_force(a::LAUTAT, density::Real)
+    AoA = a.kinematics.AoA(a.current_time)
+    dAoAdt = a.kinematics.dAoAdt(a.current_time)
+    hdot = a.kinematics.z_pos(a.current_time)
+    fourier_derivs = fourier_derivatives(a)
+
+    U_mag = sqrt(a.U[1]^2 + a.U[2]^2)
+    rot = [cos(AoA) -sin(AoA); sin(AoA) cos(AoA)]
+    t11 = density * pi * a.foil.semichord * 2 * U_mag
+    t1211 = (rot * a.U)[1] + hdot * sin(AoA)
+    t1212 = a.current_fourier_terms[1] + a.current_fourier_terms[2]/2
+    t121 = t1211 * t1212
+    t122 = 2 * a.foil.semichord * (
+        (3/4) * fourier_derivs[1]
+        + (1/4) * fourier_derivs[2] 
+        + (1/8) * fourier_derivs[3])
+    t12 = t121 + t122
+    t1 = t11 * t12
+
+    # Term 2 includes a weakly singular integral. We use singularity subtraction
+    # to get round it.
+    wake_ind_vel = rot * (-1 .*particle_induced_velocity(a.te_particles.positions,
+        a.te_particles.vorts, foil_points(a, -1), a.regularisation, a.reg_dist))[1]
+    points, weights = FastGaussQuadrature.gausslegendre(50)
+    # STOPPED HERE!!!!
 end
 
 function to_vtk(a::LAUTAT, filename::String)
