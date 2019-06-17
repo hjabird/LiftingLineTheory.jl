@@ -21,13 +21,13 @@ mutable struct ThinFoilGeometry
     end
 end
 
-mutable struct RigidKinematics
+mutable struct RigidKinematics2D
     z_pos :: Function
     dzdt :: Function
     AoA :: Function
     dAoAdt :: Function
     pivot_position :: Real
-    function RigidKinematics(z::Function, AoA::Function, pivot_position)
+    function RigidKinematics2D(z::Function, AoA::Function, pivot_position)
         @assert(hasmethod(z, (Float64,)), "z function "*
             "must accept single argument of time.")
         @assert(hasmethod(z, (Real,)), "z function "*
@@ -52,7 +52,9 @@ end
 
 mutable struct LAUTAT
     U :: Vector{Real} # Free stream velocity
-    kinematics :: RigidKinematics
+    external_purturbation :: Function #f(x::Matrix{Real}, t::Real) where x
+    # is of size (N, 2) where N is number of mes pos and returns vec of (N, 2)
+    kinematics :: RigidKinematics2D
 
     foil :: ThinFoilGeometry
     te_particles :: ParticleGroup2D
@@ -65,14 +67,15 @@ mutable struct LAUTAT
     current_time :: Real
     dt :: Real
 
-    function LAUTAT(;U=[1.,0], foil=ThinFoilGeometry(0.5,x->0),
-        kinematics=RigidKinematics(x->x, x->0, 0.0), te_particles=ParticleGroup2D(),
+    function LAUTAT(;U=[1.,0], external_purturbation=(x,t)->zeros(size(x)[1], 2),
+        foil=ThinFoilGeometry(0.5,x->0),
+        kinematics=RigidKinematics2D(x->x, x->0, 0.0), te_particles=ParticleGroup2D(),
         regularisation=winckelmans_regularisation(), reg_dist_factor=1.5,
         num_fourier_terms=8, current_fourier_terms=[], last_fourier_terms=[],
         current_time=0.0, dt=0.025)
 
-        return new(U, kinematics, foil, te_particles, regularisation,
-            sqrt(U[1]^2 + U[2]^2) * dt * 1.5, num_fourier_terms, 
+        return new(U, external_purturbation, kinematics, foil, te_particles, 
+            regularisation, sqrt(U[1]^2 + U[2]^2) * dt * 1.5, num_fourier_terms, 
             current_fourier_terms, last_fourier_terms, current_time, dt)
     end
 end
@@ -116,18 +119,26 @@ function foil_induced_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})
     weights .*= a.foil.semichord
     strengths = map(x->bound_vorticity_density(a, x), points).*weights
     kernel = winckelmans_regularisation()
-    vels = -1 .*particle_induced_velocity(vortex_pos, strengths, mes_pnts, 
+    vels = particle_induced_velocity(vortex_pos, strengths, mes_pnts, 
         kernel, a.reg_dist)    
+    return vels
+end
+
+# Excludes U
+function non_foil_ind_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})
+    kernel = winckelmans_regularisation()
+    vels = particle_induced_velocity(a.te_particles.positions, 
+        a.te_particles.vorts, mes_pnts, kernel, a.reg_dist)  
+    vels += a.external_purturbation(mes_pnts, a.current_time)
     return vels
 end
 
 function te_wake_particle_velocities(a::LAUTAT)
     reg_dist = a.reg_dist
     kernel = winckelmans_regularisation()
-    vel_self = -1 .*particle_induced_velocity(a.te_particles.positions,
-        a.te_particles.vorts, a.te_particles.positions, a.regularisation, reg_dist)
+    vel_nf = non_foil_ind_vel(a, a.te_particles.positions)
     vel_foil = foil_induced_vel(a, a.te_particles.positions)
-    vels = vel_self + vel_foil
+    vels = vel_nf + vel_foil
     vels[:, 1] .+= a.U[1]
     vels[:, 2] .+= a.U[2]
     return vels
@@ -136,8 +147,7 @@ end
 function vel_normal_to_foil_surface(a::LAUTAT, mes_pnts::Vector{<:Real})
     @assert(all(-1 .<= mes_pnts .<= 1), "Foil in [-1,1]")
     fpoints = foil_points(a, mes_pnts)
-    wake_vels =-1 .* particle_induced_velocity(a.te_particles.positions, 
-        a.te_particles.vorts, fpoints, a.regularisation, a.reg_dist)
+    field_vels = non_foil_ind_vel(a, fpoints)
     ext_vels = a.U
     alpha = a.kinematics.AoA(a.current_time)
     alpha_dot = a.kinematics.dAoAdt(a.current_time)
@@ -146,12 +156,12 @@ function vel_normal_to_foil_surface(a::LAUTAT, mes_pnts::Vector{<:Real})
     rot = [cos(alpha) -sin(alpha); sin(alpha) cos(alpha)]
     ext_vels = rot * ext_vels
     for i = 1 : length(mes_pnts)
-        wake_vels[i, :] = rot * wake_vels[i, :]
+        field_vels[i, :] = rot * field_vels[i, :]
     end
-    wash = (slopes .* (ext_vels[1] .+ dzdt * sin(alpha) .+ wake_vels[:, 1])
+    wash = (slopes .* (ext_vels[1] .+ dzdt * sin(alpha) .+ field_vels[:, 1])
         .- ext_vels[2]
         .- alpha_dot * a.foil.semichord .* (mes_pnts .- a.kinematics.pivot_position)
-        .+ dzdt * cos(alpha) .- wake_vels[:, 2])
+        .+ dzdt * cos(alpha) .- field_vels[:, 2])
     return wash
 end
 
@@ -168,7 +178,7 @@ function compute_fourier_terms(a::LAUTAT)
     return fterms
 end
 
-function pivot_coordinate(foil::ThinFoilGeometry, kinem::RigidKinematics, t::Real)
+function pivot_coordinate(foil::ThinFoilGeometry, kinem::RigidKinematics2D, t::Real)
     pos = [0., 0.]
     pos[1] = kinem.pivot_position * foil.semichord
     pos[2] = kinem.z_pos(t)
@@ -192,6 +202,7 @@ function shed_new_te_particle_with_zero_vorticity!(a::LAUTAT)
         part_pos = foil_points(a, [1])[1,:]'
         vel = -foil_velocity(a, [1])
         vel .+= a.U'
+        vel .+= a.external_purturbation(part_pos, a.current_time)
         part_pos += vel * a.dt * 0.5
     else 
         part_pos = a.te_particles.positions[end,:]'
@@ -264,6 +275,10 @@ function leading_edge_suction_force(a::LAUTAT, density::Real)
         a.current_fourier_terms[1]^2
 end
 
+function fourier_derivatives(a::LAUTAT)
+    return (a.current_fourier_terms .- a.last_fourier_terms) ./ a.dt
+end
+
 function aerofoil_normal_force(a::LAUTAT, density::Real)
     AoA = a.kinematics.AoA(a.current_time)
     dAoAdt = a.kinematics.dAoAdt(a.current_time)
@@ -285,10 +300,33 @@ function aerofoil_normal_force(a::LAUTAT, density::Real)
 
     # Term 2 includes a weakly singular integral. We use singularity subtraction
     # to get round it.
-    wake_ind_vel = rot * (-1 .*particle_induced_velocity(a.te_particles.positions,
-        a.te_particles.vorts, foil_points(a, -1), a.regularisation, a.reg_dist))[1]
+    wake_ind_vel_ssm = (rot * non_foil_ind_vel(a, foil_points(a, [-1]))')[1,1]
     points, weights = FastGaussQuadrature.gausslegendre(50)
-    # STOPPED HERE!!!!
+    normal_ind_vel_vect = non_foil_ind_vel(a, foil_points(a, points))
+    normal_ind_velxr = zeros(size(normal_ind_vel_vect)[1])
+    for i = 1 : size(normal_ind_vel_vect)[1]
+        normal_ind_velxr[i] = (rot * normal_ind_vel_vect[i, :])[1]
+    end 
+    tm1 = map(x->bound_vorticity_density(a, x), points)
+    tm2 = (normal_ind_velxr .- wake_ind_vel_ssm)
+    t2 = a.foil.semichord * density * sum(weights .*
+        tm1 .*
+        tm2)
+    t2 += density * wake_ind_vel_ssm * sqrt(a.U[1]^2 +  a.U[2]^2) * 2 *
+        a.foil.semichord * pi * (a.current_fourier_terms[1] +
+            a.current_fourier_terms[2]/2)
+    return t1 + t2
+end
+
+function lift_and_drag_coefficients(a::LAUTAT)
+    chord = a.foil.semichord * 2
+    U = sqrt(a.U[1]^2 + a.U[2]^2)
+    normal_coeff = aerofoil_normal_force(a, 1.) / (chord * U)
+    suction_coeff = leading_edge_suction_force(a, 1.) / (chord * U)
+    alpha = a.kinematics.AoA(a.current_time)
+    cl = normal_coeff * cos(alpha) + suction_coeff * sin(alpha)
+    cd = normal_coeff * sin(alpha) - suction_coeff * cos(alpha)
+    return cl, cd
 end
 
 function to_vtk(a::LAUTAT, filename::String)
