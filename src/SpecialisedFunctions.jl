@@ -9,18 +9,7 @@ import SpecialFunctions
 import FastGaussQuadrature
 
 #= Aerodynamics functions --------------------------------------------------=#
-"""
-    theodorsen_fn(k::Real)
-
-Theodorsen's function C(k), where k is chord reduced frequency = omega c / 2 U.
-"""
-function theodorsen_fn(k :: Real)
-    @assert(k >= 0, "Chord reduced frequency should be positive.")
-
-    h21 = SpecialFunctions.hankelh2(1, k)
-    h20 = SpecialFunctions.hankelh2(0, k)
-    return h21 / (h21 + im * h20)
-end
+# Theodorsen_fn in TheodorsenSimple.jl
 
 """
 Generate a Wagner function of using a variable number of terms.

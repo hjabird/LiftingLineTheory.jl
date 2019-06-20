@@ -36,7 +36,9 @@ using CVortex
 import ForwardDiff, WriteVTK
 # source files
 include("DownwashEnum.jl")			# An enum. No deps.
-include("SpecialisedFunctions.jl")	# Theodorsen etc. + Exponential integral
+include("SpecialisedFunctions.jl")	# Wagner etc. + Exponential integral
+include("Interpolators1D.jl")		# Cubic spline interpolation
+include("TheodorsenSimple.jl")		# Theodorsen + simple evaluation of Thoed.
 include("StraightAnalyticWing.jl")	# Define wing  planform shape
 include("HarmonicULLT.jl")			# Harmonic ULLT
 include("LAUTAT.jl")				# Large amplitude thin aerofoil theory

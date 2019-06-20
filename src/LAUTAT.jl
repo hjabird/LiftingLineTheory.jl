@@ -52,7 +52,7 @@ end
 
 mutable struct LAUTAT
     U :: Vector{Real} # Free stream velocity
-    external_purturbation :: Function #f(x::Matrix{Real}, t::Real) where x
+    external_perturbation :: Function #f(x::Matrix{Real}, t::Real) where x
     # is of size (N, 2) where N is number of mes pos and returns vec of (N, 2)
     kinematics :: RigidKinematics2D
 
@@ -67,14 +67,15 @@ mutable struct LAUTAT
     current_time :: Real
     dt :: Real
 
-    function LAUTAT(;U=[1.,0], external_purturbation=(x,t)->zeros(size(x)[1], 2),
+    function LAUTAT(;U=[1.,0]::Vector{<:Real}, 
+        external_perturbation=(x,t)->zeros(size(x)[1], 2),
         foil=ThinFoilGeometry(0.5,x->0),
         kinematics=RigidKinematics2D(x->x, x->0, 0.0), te_particles=ParticleGroup2D(),
         regularisation=winckelmans_regularisation(), reg_dist_factor=1.5,
         num_fourier_terms=8, current_fourier_terms=[], last_fourier_terms=[],
         current_time=0.0, dt=0.025)
 
-        return new(U, external_purturbation, kinematics, foil, te_particles, 
+        return new(U, external_perturbation, kinematics, foil, te_particles, 
             regularisation, sqrt(U[1]^2 + U[2]^2) * dt * 1.5, num_fourier_terms, 
             current_fourier_terms, last_fourier_terms, current_time, dt)
     end
@@ -126,10 +127,10 @@ end
 
 # Excludes U
 function non_foil_ind_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})
-    kernel = winckelmans_regularisation()
+    kernel = a.regularisation
     vels = particle_induced_velocity(a.te_particles.positions, 
         a.te_particles.vorts, mes_pnts, kernel, a.reg_dist)  
-    vels += a.external_purturbation(mes_pnts, a.current_time)
+    vels += a.external_perturbation(mes_pnts, a.current_time)
     return vels
 end
 
@@ -166,7 +167,7 @@ function vel_normal_to_foil_surface(a::LAUTAT, mes_pnts::Vector{<:Real})
 end
 
 function compute_fourier_terms(a::LAUTAT)
-    points, weights = FastGaussQuadrature.gausslegendre(30)
+    points, weights = FastGaussQuadrature.gausslegendre(100)
     points, weights = linear_remap(points, weights, -1, 1, 0, pi)
     dwsh = vel_normal_to_foil_surface(a, -cos.(points))
     fterms = zeros(a.num_fourier_terms)
@@ -202,7 +203,7 @@ function shed_new_te_particle_with_zero_vorticity!(a::LAUTAT)
         part_pos = foil_points(a, [1])[1,:]'
         vel = -foil_velocity(a, [1])
         vel .+= a.U'
-        vel .+= a.external_purturbation(part_pos, a.current_time)
+        vel .+= a.external_perturbation(part_pos, a.current_time)
         part_pos += vel * a.dt * 0.5
     else 
         part_pos = a.te_particles.positions[end,:]'
@@ -219,7 +220,7 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
     alpha = a.kinematics.AoA(a.current_time)
     alpha_dot = a.kinematics.dAoAdt(a.current_time)
     dzdt = a.kinematics.dzdt(a.current_time)
-    qpoints, qweights = FastGaussQuadrature.gausslegendre(50)
+    qpoints, qweights = FastGaussQuadrature.gausslegendre(100)
     qpoints, qweights = linear_remap(qpoints, qweights, -1, 1, 0, pi)
     # Compute the influence of the known part of the wake
     I_k = sum(
@@ -232,7 +233,7 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
         foil_pos = -cos.(theta)
         foil_coords = foil_points(a, foil_pos)
         vels = mapreduce(
-            i->(rot * (-1 .*particle_induced_velocity(posn, 1., foil_coords[i,:], a.regularisation, a.reg_dist)))',
+            i->(rot * particle_induced_velocity(posn, 1., foil_coords[i,:], a.regularisation, a.reg_dist))',
             vcat, 1 : length(qpoints))
         normal_vel = vels[:,1].*map(a.foil.camber_slope, foil_pos) .- vels[:,2]
         return normal_vel .* (cos.(theta).-1) * 2 * a.foil.semichord
@@ -319,21 +320,23 @@ function aerofoil_normal_force(a::LAUTAT, density::Real)
 end
 
 function lift_and_drag_coefficients(a::LAUTAT)
-    chord = a.foil.semichord * 2
+    schord = a.foil.semichord
     U = sqrt(a.U[1]^2 + a.U[2]^2)
-    normal_coeff = aerofoil_normal_force(a, 1.) / (chord * U)
-    suction_coeff = leading_edge_suction_force(a, 1.) / (chord * U)
+    normal_coeff = aerofoil_normal_force(a, 1.) / (schord * U)
+    suction_coeff = leading_edge_suction_force(a, 1.) / (schord * U)
     alpha = a.kinematics.AoA(a.current_time)
     cl = normal_coeff * cos(alpha) + suction_coeff * sin(alpha)
     cd = normal_coeff * sin(alpha) - suction_coeff * cos(alpha)
     return cl, cd
 end
 
-function to_vtk(a::LAUTAT, filename::String)
+function to_vtk(a::LAUTAT, filename::String; include_foil=true)
     np = length(a.te_particles.vorts)
-    cells = Vector{WriteVTK.MeshCell}(undef, np+29)
-    points = zeros(np+30, 3)
-    vorts = zeros(np+30)
+    extrap = include_foil ? 30 : 0
+    extrac = include_foil ? extrac-1 : 0
+    cells = Vector{WriteVTK.MeshCell}(undef, np + extrac)
+    points = zeros(np+extrap, 3)
+    vorts = zeros(np+extrap)
     vorts[1:np] = a.te_particles.vorts
     for i = 1 : np
         cells[i] = WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_VERTEX, [i])
@@ -341,11 +344,11 @@ function to_vtk(a::LAUTAT, filename::String)
             a.te_particles.positions[i,1], 
             a.te_particles.positions[i,2], 0.]
     end
-    localpos = collect(-1:2/29:1)
-    points[np+1:end, :] = hcat(foil_points(a, localpos), zeros(30, 1))
+    localpos = collect(-1:2/(include_foil ? extrac : 0):1)
+    points[np+1:end, :] = hcat(foil_points(a, localpos), zeros(extrap, 1))
     bv = vcat([NaN], map(x->bound_vorticity_density(a, x), localpos[2:end]))
-    vorts[np+1:end] = bv .* a.foil.semichord/30
-    for i = 1 : 29
+    vorts[np+1:end] = bv .* a.foil.semichord/extrap
+    for i = 1 : extrac
         cells[i + np] = WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_LINE, 
             [i + np, i + np + 1])
     end
@@ -353,4 +356,15 @@ function to_vtk(a::LAUTAT, filename::String)
     WriteVTK.vtk_point_data(vtkfile, vorts, "Vorticity")
     WriteVTK.vtk_save(vtkfile)
     return
+end
+
+function csv_titles(a::LAUTAT)
+    return ["Time" "dt" "N" "BV" "A0" "A1" "Cl" "Cd"]
+end
+
+function csv_row(a::LAUTAT)
+    cl, cd = lift_and_drag_coefficients(a)
+    return [a.current_time, a.dt, length(a.te_particles.vorts),
+        bound_vorticity(a), a.current_fourier_terms[1],
+        a.current_fourier_terms[2], cl, cd]'
 end
