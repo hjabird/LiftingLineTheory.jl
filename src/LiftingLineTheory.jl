@@ -15,12 +15,15 @@ export
     DownwashModel,
 	HarmonicULLT,
 	StraightAnalyticWing,
+	LAULLT,
 	
 	# For getting results from ULLTs
 	bound_vorticity,
 	lift_coefficient,
+	moment_coefficient,
 	compute_fourier_terms!,
 	compute_collocation_points!,
+	to_vtk,
 	
 	# For querying wings
 	aspect_ratio, 
@@ -42,4 +45,5 @@ include("TheodorsenSimple.jl")		# Theodorsen + simple evaluation of Thoed.
 include("StraightAnalyticWing.jl")	# Define wing  planform shape
 include("HarmonicULLT.jl")			# Harmonic ULLT
 include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
+include("LAULLT.jl")				# Large amplitude lifting line theory
 end

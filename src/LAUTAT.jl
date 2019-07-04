@@ -19,6 +19,15 @@ mutable struct ThinFoilGeometry
             "must accept real arguments for automatic differentiation.")
         return new(semichord, camber_func, x->ForwardDiff.derivative(camber_func, x))
     end
+    function ThinFoilGeometry(semichord::Real, camber_func::Function,
+        camber_slope::Function)
+        @assert(semichord>0, "Semichord must be positive")
+        @assert(hasmethod(camber_func, (Float64,)), "Camber function "*
+            "must accept single argument in [-1 (LE), 1 (TE)].")
+        @assert(hasmethod(camber_slope, (Float64,)), "Camber slope function "*
+            "must accept single argument in [-1 (LE), 1 (TE)].")
+        return new(semichord, camber_func, camber_slope)
+    end
 end
 
 mutable struct RigidKinematics2D
@@ -81,6 +90,14 @@ mutable struct LAUTAT
     end
 end
 
+function initialise(a::LAUTAT)
+    tmptime = a.current_time
+    a.current_time -= a.dt
+    a.current_fourier_terms = compute_fourier_terms(a)
+    a.last_fourier_terms = a.current_fourier_terms
+    a.current_time = tmptime
+end
+
 function foil_points(a::LAUTAT, points::Vector{<:Real})
     @assert(all(-1 .<= points .<= 1), "All points must be in [-1,1]")
     x1 = zeros(length(points), 2)
@@ -126,11 +143,18 @@ function foil_induced_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})
 end
 
 # Excludes U
-function non_foil_ind_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})
+function non_foil_ind_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})  
+    @assert(size(mes_pnts)[2] == 2, "size(mes_pnts)[2] should be 2, but is"*
+        " actually "*string(size(mes_pnts)[2])*".")
     kernel = a.regularisation
     vels = particle_induced_velocity(a.te_particles.positions, 
-        a.te_particles.vorts, mes_pnts, kernel, a.reg_dist)  
-    vels += a.external_perturbation(mes_pnts, a.current_time)
+        a.te_particles.vorts, mes_pnts, kernel, a.reg_dist)
+    velsext = a.external_perturbation(mes_pnts, a.current_time)
+    @assert(size(velsext) == size(mes_pnts), "A call to LAUTAT.external_perturbation("*
+        "mes_pnts, time), with mes_pnts as a (N, 2) array should return an "*
+        "(N, 2) array of velocities. Here, mes_pnts is "*string(size(mes_pnts))*
+        " and returned velocities is "*string(size(velsext))*".")
+    vels += velsext
     return vels
 end
 

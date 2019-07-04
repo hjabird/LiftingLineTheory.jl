@@ -462,11 +462,6 @@ function lift_coefficient(
         "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
 
     w_area = area(a.wing)
-    if(a.pitch_plunge == 3)
-        chord_cl_fn = associated_chord_cl_heave
-    elseif(a.pitch_plunge == 5)
-        chord_cl_fn = associated_chord_cl_pitch
-    end
     integrand = y->lift_coefficient(a, y) * 
         a.amplitude_fn(y) * a.wing.chord_fn(y)
     nodes, weights = FastGaussQuadrature.gausslegendre(70)
@@ -518,6 +513,73 @@ function associated_chord_cl_pitch(
     t22 = 1 + im * k / 2
     t2 = t21 * t22
     return t1 + t2
+end
+
+function moment_coefficient(
+    a :: HarmonicULLT )
+
+    @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
+        "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
+
+    w_area = area(a.wing)
+    semispan = a.wing.semispan
+    integrand = y->moment_coefficient(a, y) * 
+        a.amplitude_fn(y) * a.wing.chord_fn(y)^2
+    nodes, weights = FastGaussQuadrature.gausslegendre(70)
+    pts = map(
+        x->linear_remap(x[1], x[2], -1, 1, -semispan, semispan),
+        zip(nodes, weights))
+    integral = sum(last.(pts) .* map(integrand, first.(pts))) / 
+        (w_area^2 / (2*semispan))
+    CM = integral
+    return CM
+end
+
+function moment_coefficient(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    # Notes 6 pg 55
+    if(a.pitch_plunge == 3)
+        associated_cm_fn = associated_chord_cm_heave
+    elseif(a.pitch_plunge == 5)
+        associated_cm_fn = associated_chord_cm_pitch
+    end
+    cmA = a.amplitude_fn(y) * associated_cm_fn(a, y) - f_eq(a, y) *
+        associated_chord_cm_heave(a, y)
+    return cmA / a.amplitude_fn(y)
+end
+
+function associated_chord_cm_heave(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    # Notes 6 pg 55
+    @assert(abs(y) <= a.wing.semispan)
+    k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    num = - pi * theodorsen_fn(k) * a.free_stream_vel
+    den = 2 * a.wing.chord_fn(y)
+    return num / den
+end
+
+function associated_chord_cm_pitch(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    # Notes 6 pg 55
+    @assert(abs(y) <= a.wing.semispan)
+    semichord = a.wing.chord_fn(y) / 2
+    omega = a.angular_fq
+    k = omega * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    Ck = theodorsen_fn(k)
+    t1 = pi * a.free_stream_vel / 2
+    t21 = semichord
+    t22 = im * omega * semichord^2 / (8 * a.free_stream_vel)
+    t23 = im * a.free_stream_vel / omega
+    t24 = -Ck * (semichord/2 + im * a.free_stream_vel / omega)
+    t2 = t21 + t22 + t23 + t24
+    t = t1 * t2
+    return t
 end
 
 function f_eq(
