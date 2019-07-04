@@ -357,7 +357,7 @@ end
 function to_vtk(a::LAUTAT, filename::String; include_foil=true)
     np = length(a.te_particles.vorts)
     extrap = include_foil ? 30 : 0
-    extrac = include_foil ? extrac-1 : 0
+    extrac = include_foil ? extrap-1 : 0
     cells = Vector{WriteVTK.MeshCell}(undef, np + extrac)
     points = zeros(np+extrap, 3)
     vorts = zeros(np+extrap)
