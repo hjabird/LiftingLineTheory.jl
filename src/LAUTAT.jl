@@ -304,6 +304,68 @@ function fourier_derivatives(a::LAUTAT)
     return (a.current_fourier_terms .- a.last_fourier_terms) ./ a.dt
 end
 
+function moment_coefficient(a::LAUTAT, xref::Real)
+    Fn = aerofoil_normal_force(a, 1)
+    AoA = a.kinematics.AoA(a.current_time)
+    dAoAdt = a.kinematics.dAoAdt(a.current_time)
+    hdot = a.kinematics.z_pos(a.current_time)
+    fts = a.current_fourier_terms
+    fds = fourier_derivatives(a)
+    rot = [cos(AoA) -sin(AoA); sin(AoA) cos(AoA)]
+    c = a.foil.semichord
+    U = sqrt(a.U[1]^2 + a.U[2]^2)
+
+    t1 = xref * Fn
+    t21 = - pi * c^2 * U
+    t2211 = (rot * a.U)[1] + hdot * sin(AoA)
+    t2212 = (fts[1]/4 + fts[2]/4 - fts[3]/8)
+    t221 = t2211 * t2212
+    t222 = c * (7 * fds[1] / 16 + 11 * fds[2] / 64
+        + fds[3] / 16 - fds[4] / 64)
+    t22 = t221 + t222
+    t2 = t21 * t22
+    
+    # Term 3 includes a weakly singular integral. We use singularity subtraction
+    # to get round it.
+    wake_ind_vel_ssm = (rot * non_foil_ind_vel(a, foil_points(a, [-1]))')[1,1]
+    points, weights = FastGaussQuadrature.gausslegendre(50)
+    normal_ind_vel_vect = non_foil_ind_vel(a, foil_points(a, points))
+    normal_ind_velxr = zeros(size(normal_ind_vel_vect)[1])
+    for i = 1 : size(normal_ind_vel_vect)[1]
+        normal_ind_velxr[i] = (rot * normal_ind_vel_vect[i, :])[1]
+    end 
+    tm1 = map(x->bound_vorticity_density(a, x), points)
+    tm2 = (normal_ind_velxr .- wake_ind_vel_ssm)
+    t2 = a.foil.semichord * sum(weights .*
+        tm1 .*
+        tm2)
+    t2 += wake_ind_vel_ssm * sqrt(a.U[1]^2 +  a.U[2]^2) * 2 *
+        a.foil.semichord * pi * (a.current_fourier_terms[1] +
+            a.current_fourier_terms[2]/2)
+
+    # Term 3 includes a weakly singular integral. We use singularity subtraction
+    # to get round it.
+    wake_ind_vel_ssm = -1 * 
+        (rot * non_foil_ind_vel(a, foil_points(a, [-1]))')[1,1]
+    points, weights = FastGaussQuadrature.gausslegendre(50)
+    normal_ind_vel_vect = non_foil_ind_vel(a, foil_points(a, points))
+    normal_ind_velxr = zeros(size(normal_ind_vel_vect)[1])
+    for i = 1 : size(normal_ind_vel_vect)[1]
+        normal_ind_velxr[i] = points[i] * (rot * normal_ind_vel_vect[i, :])[1]
+    end 
+    tm1 = map(x->bound_vorticity_density(a, x), points)
+    tm2 = (-1 .* normal_ind_velxr .- wake_ind_vel_ssm)
+    t3 = a.foil.semichord * sum(weights .*
+        tm1 .*
+        tm2)
+    t3 += wake_ind_vel_ssm * sqrt(a.U[1]^2 +  a.U[2]^2) * 2 *
+        a.foil.semichord * pi * (a.current_fourier_terms[1] +
+            a.current_fourier_terms[2]/2)
+
+    t = (t1 + t2 + t3) / (U^2 * c^2 / 2)
+    return t
+end
+
 function aerofoil_normal_force(a::LAUTAT, density::Real)
     AoA = a.kinematics.AoA(a.current_time)
     dAoAdt = a.kinematics.dAoAdt(a.current_time)
@@ -383,12 +445,14 @@ function to_vtk(a::LAUTAT, filename::String; include_foil=true)
 end
 
 function csv_titles(a::LAUTAT)
-    return ["Time" "dt" "N" "BV" "A0" "A1" "Cl" "Cd"]
+    return ["Time" "dt" "N" "BV" "z" "AoA" "A0" "A1" "Cl" "Cd"]
 end
 
 function csv_row(a::LAUTAT)
     cl, cd = lift_and_drag_coefficients(a)
+    aoa = a.kinematics.AoA(a.current_time)
+    z = a.kinematics.z_pos(a.current_time)
     return [a.current_time, a.dt, length(a.te_particles.vorts),
-        bound_vorticity(a), a.current_fourier_terms[1],
+        bound_vorticity(a), z, aoa, a.current_fourier_terms[1],
         a.current_fourier_terms[2], cl, cd]'
 end

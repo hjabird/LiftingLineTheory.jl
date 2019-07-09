@@ -274,9 +274,39 @@ function to_vtk(a::LAULLT, filename::String)
     return
 end
 
-function lift_coefficient(a::LAULLT)
-    @error("TODO")
-    return
+function lift_and_drag_coefficient_splines(a::LAULLT)
+    semispan = a.wing.semispan
+    ypts = semispan * a.inner_sol_positions
+    eypts = vcat([-semispan], ypts, [semispan])
+    lifts = zeros(length(eypts))
+    drags = zeros(length(eypts))
+    lifts[1] = 0
+    drags[1] = 0
+    for i = 1 : length(eypts)
+        lifts[i+1], drags[i+1] = lift_and_drag_coefficients(a.inner_sols[i])
+    end
+    lifts[end] = 0
+    drags[end] = 0
+    ls = CubicSpline(eypts, lifts)
+    ds = CubicSpline(eypts, drags)
+    return ls, ds
+end
+
+function lift_and_drag_coefficients(a::LAULLT, y::Real)
+    semispan = a.wing.semispan
+    @assert(-semispan <= y <= semispan)
+    ls, ds =  lift_and_drag_coefficient_splines(a)
+    return ls(y), ds(y)
+end
+
+function lift_and_drag_coefficients(a::LAULLT)
+    semispan = a.wing.semispan
+    ls, ds = lift_and_drag_coefficient_splines(a)
+    points, weights = FastGaussQuadrature.gausslegendre(50)
+    points, weights = linear_remap(points, weights, -1, 1, -semispan, semispan)
+    liftc = sum(weights .* ls.(points))
+    dragc = sum(weights .* ds.(points))
+    return liftc, dragc
 end
 
 function csv_titles(a::LAULLT)

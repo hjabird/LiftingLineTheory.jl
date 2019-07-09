@@ -12,18 +12,28 @@ __precompile__(true)
 module LiftingLineTheory
 
 export
+	StraightAnalyticWing,
     DownwashModel,
 	HarmonicULLT,
-	StraightAnalyticWing,
+	LAUTAT,
 	LAULLT,
+	RigidKinematics2D,
 	
-	# For getting results from ULLTs
+	# Simulation control
+	advance_one_step,
+	compute_fourier_terms!,
+	compute_collocation_points!,
+
+	# Post-processing
 	bound_vorticity,
 	lift_coefficient,
 	moment_coefficient,
-	compute_fourier_terms!,
-	compute_collocation_points!,
+	lift_and_drag_coefficients,
+
+	# IO
 	to_vtk,
+	csv_titles,
+	csv_row,
 	
 	# For querying wings
 	aspect_ratio, 
@@ -33,10 +43,15 @@ export
 	strip_theory,
 	unsteady,
 	streamwise_filaments,
-	psuedosteady
+	psuedosteady,
+
+	# Useful fuctions 
+	eldredge_ramp,
+	wagner_fn,
+	theodorsen_fn
 	
 using CVortex
-import ForwardDiff, WriteVTK
+import ForwardDiff, WriteVTK, FastGaussQuadrature
 # source files
 include("DownwashEnum.jl")			# An enum. No deps.
 include("SpecialisedFunctions.jl")	# Wagner etc. + Exponential integral
