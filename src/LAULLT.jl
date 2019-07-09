@@ -41,7 +41,8 @@ mutable struct LAULLT
 
     function LAULLT(;U=[1.,0]::Vector{<:Real}, 
         wing_planform=make_rectangular(StraightAnalyticWing, 4, 4),
-        inner_solution_positions::Vector{<:Real}=collect(-1:2/8:1)[2:end-1],
+        inner_solution_positions::Vector{<:Real}=
+            (collect(-1:2/16:1)[1:end-1] + collect(-1:2/16:1)[2:end]) ./ 2,
         foil::ThinFoilGeometry=ThinFoilGeometry(0.5,x->0),
         kinematics=RigidKinematics2D(x->x, x->0, 0.0),
         regularisation=winckelmans_regularisation(), reg_dist_factor=1.5,
@@ -274,21 +275,24 @@ function to_vtk(a::LAULLT, filename::String)
     return
 end
 
+# Returns local C_l * chord and C_d * chord as spline.
 function lift_and_drag_coefficient_splines(a::LAULLT)
-    semispan = a.wing.semispan
+    semispan = a.wing_planform.semispan
     ypts = semispan * a.inner_sol_positions
     eypts = vcat([-semispan], ypts, [semispan])
     lifts = zeros(length(eypts))
     drags = zeros(length(eypts))
     lifts[1] = 0
     drags[1] = 0
-    for i = 1 : length(eypts)
+    for i = 1 : length(eypts)-2
         lifts[i+1], drags[i+1] = lift_and_drag_coefficients(a.inner_sols[i])
+        lifts[i+1] *= chord(a.wing_planform, a.inner_sol_positions[i])
+        drags[i+1] *= chord(a.wing_planform, a.inner_sol_positions[i])
     end
     lifts[end] = 0
     drags[end] = 0
-    ls = CubicSpline(eypts, lifts)
-    ds = CubicSpline(eypts, drags)
+    ls = CubicSpline{Float64}(eypts, lifts)
+    ds = CubicSpline{Float64}(eypts, drags)
     return ls, ds
 end
 
@@ -296,21 +300,24 @@ function lift_and_drag_coefficients(a::LAULLT, y::Real)
     semispan = a.wing.semispan
     @assert(-semispan <= y <= semispan)
     ls, ds =  lift_and_drag_coefficient_splines(a)
-    return ls(y), ds(y)
+    c = chord(a.wing_planform, y)
+    return ls(y) * c, ds(y) * c
 end
 
 function lift_and_drag_coefficients(a::LAULLT)
-    semispan = a.wing.semispan
+    semispan = a.wing_planform.semispan
+    warea = area(a.wing_planform)
     ls, ds = lift_and_drag_coefficient_splines(a)
     points, weights = FastGaussQuadrature.gausslegendre(50)
     points, weights = linear_remap(points, weights, -1, 1, -semispan, semispan)
-    liftc = sum(weights .* ls.(points))
-    dragc = sum(weights .* ds.(points))
+    chords = map(x->chord(a.wing_planform, x), points)
+    liftc = sum(weights .* ls.(points) .* chords) / warea
+    dragc = sum(weights .* ds.(points) .* chords) / warea
     return liftc, dragc
 end
 
 function csv_titles(a::LAULLT)
-    start = ["Time" "dt" "N" "N_Inner"]
+    start = ["Time" "dt" "N" "N_Inner" "CL" "CD"]
     for i = 1 : length(a.inner_sols)
         str = "I"*string(i)*"_"
         tmp = [str*"A0" str*"A1" str*"U3Dx" str*"U3Dz"]
@@ -322,7 +329,8 @@ end
 function csv_row(a::LAULLT)
     inner1 = a.inner_sols[1]
     ctime = inner1.current_time
-    start = [ctime inner1.dt length(inner1.te_particles.vorts) length(a.inner_sols)]
+    lift, drag = lift_and_drag_coefficients(a)
+    start = [ctime inner1.dt length(inner1.te_particles.vorts) length(a.inner_sols) lift drag]
     for i = 1 : length(a.inner_sols)
         inner = a.inner_sols[i]
         tmp = [inner.current_fourier_terms[1] inner.current_fourier_terms[2] inner.external_perturbation([0 0], ctime)[1,1] inner.external_perturbation([0 0], ctime)[1,2]]

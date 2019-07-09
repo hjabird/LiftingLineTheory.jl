@@ -51,7 +51,7 @@ export
 	theodorsen_fn
 	
 using CVortex
-import ForwardDiff, WriteVTK, FastGaussQuadrature
+import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature
 # source files
 include("DownwashEnum.jl")			# An enum. No deps.
 include("SpecialisedFunctions.jl")	# Wagner etc. + Exponential integral

@@ -5,9 +5,6 @@
 #
 #==============================================================================#
 
-import FastGaussQuadrature
-import HCubature
-
 mutable struct HarmonicULLT
     angular_fq :: Real              # in rad / s
     free_stream_vel :: Real
