@@ -41,7 +41,7 @@ mutable struct LAULLT
 
     function LAULLT(;U=[1.,0]::Vector{<:Real}, 
         wing_planform=make_rectangular(StraightAnalyticWing, 4, 4),
-        inner_solution_positions::Vector{<:Real}=collect(-1:2/8:1)[2:end-1],
+        inner_solution_positions::Vector{<:Real}=collect(-1:2/12:1)[2:end-1],
         foil::ThinFoilGeometry=ThinFoilGeometry(0.5,x->0),
         kinematics=RigidKinematics2D(x->x, x->0, 0.0),
         regularisation=winckelmans_regularisation(), reg_dist_factor=1.5,
@@ -178,14 +178,16 @@ function construct_wake_lattice(a::LAULLT)
     np = length(a.inner_sols[1].te_particles.vorts) # Number of Particles
     ni = length(a.inner_sols) # Number of Inner solutoins
     semispan = a.wing_planform.semispan
-    iypts = semispan * a.inner_sol_positions # Y PoinTS
-    ypts = vcat([-semispan], (iypts[1:end-1] + iypts[2:end])/2, [semispan])
-    @assert(length(ypts) == ni+1)
-    vertices = zeros(np+1, ni+1, 3)   # To make the mesh in the wake.
-    vorticities = zeros(np, ni)
+    iypts = semispan * a.inner_sol_positions # inner y solution posn.
+    #ypts = vcat([-semispan], (iypts[1:end-1] + iypts[2:end])/2, [semispan])
+    ypts = collect(-semispan: semispan/20 : semispan)
+    cypts = (ypts[1:end-1] + ypts[2:end]) ./ 2
+    #@assert(length(ypts) == ni+1)
+    vertices = zeros(np+1, length(ypts), 3)   # To make the mesh in the wake.
+    vorticities = zeros(np, length(ypts)-1)
     vorticity_acc = map(i->-bound_vorticity(a.inner_sols[i]), 1:ni)
     # One edge of the vortex lattice is the lifting line on x=0,z=0
-    for iy = 1 : ni + 1
+    for iy = 1 : length(ypts)
         vertices[1, iy, :] = [0, ypts[iy], 0]
     end
     tmpvertex = zeros(ni, 2)
@@ -198,15 +200,16 @@ function construct_wake_lattice(a::LAULLT)
         end
         spl_x = CubicSpline{Float64}(iypts, tmpvertex[:, 1])
         spl_z = CubicSpline{Float64}(iypts, tmpvertex[:, 2])
-        for iy = 1:ni+1
+        for iy = 1:length(ypts)
             vertices[ix + 1, iy, 1] = spl_x(ypts[iy])
             vertices[ix + 1, iy, 2] = ypts[iy]
             vertices[ix + 1, iy, 3] = spl_z(ypts[iy])
         end
         if ix < np
-            for iy = 1 : ni
-                vorticity_acc[iy] -= a.inner_sols[iy].te_particles.vorts[ix]
-                vorticities[ix+1, iy] = vorticity_acc[iy]
+            vorticity_acc -= map(i->a.inner_sols[i].te_particles.vorts[ix], 1:ni)
+            spl_v = CubicSpline{Float64}(iypts, vorticity_acc)
+            for iy = 1 : length(cypts)
+                vorticities[ix+1, iy] = spl_v(cypts[iy])
             end
         end
     end
