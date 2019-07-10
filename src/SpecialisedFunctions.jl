@@ -140,6 +140,26 @@ function gaver_stehfest(
 end
 
 #= Special functions -------------------------------------------------------=#
+"""
+The Eldredge ramp function is a suggested canonical kinematic from
+Résumé of the AIAA FDTC Low Reynolds Number Discussion Group’s Canonical Cases,
+M.V. Ol, A. Altman, J.D. Eldredge, D.J. Garmann, and Y. Lian,
+48th AIAA Aerospace Sciences Meeting Including the New Horizons Forum and 
+Aerospace Exposition, 4 - 7 January 2010, Orlando, Florida.
+AIAA 2010-1085
+"""
+function eldredge_ramp(
+    t::Real, 
+    t1::Real, t2::Real, t3::Real, t4::Real, 
+    a::Real, U_inf::Real, chord::Real)
+    @assert(chord > 0, "Chord must be positive.")
+    @assert(U_inf > 0, "Reference velocity must be positive.")
+    @assert(a > 0, "Free parameter a must be positive.")
+    @assert(t1 < t2 < t3 < t4, "Time parameters must be in order.")
+    t11n = cosh(a * U_inf * (t-t1) / chord) * cosh(a * U_inf * (t-t4) / chord)
+    t11d = cosh(a * U_inf * (t-t2) / chord) * cosh(a * U_inf * (t-t3) / chord) 
+    return log(t11n / t11d)
+end
 
 #   EXPONENTIAL INTEGRAL                                                      
 #   Julia does not have a exponential integral implementation. This is 

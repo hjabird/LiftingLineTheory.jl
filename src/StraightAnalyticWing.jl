@@ -60,5 +60,22 @@ function area(
     return HCubature.hquadrature(a.chord_fn, -a.semispan, a.semispan)[1]
 end
 
+"""
+The chord of a wing at a point on the span in global coordinates.
+"""
+function chord(
+    a :: StraightAnalyticWing,
+    y :: Real)
+    @assert(abs(y) <= a.semispan, "Global coordinate must be in"*
+        " [-semispan, semispan].")
+    return a.chord_fn(y)
+end
+
+function chord(
+    a :: StraightAnalyticWing,
+    y :: Array{<:Real})
+    return map(x->chord(a, x), y)
+end
+
 # END StraightAnalyticWing.jl
 #============================================================================#

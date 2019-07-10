@@ -38,15 +38,17 @@ mutable struct LAULLT
 
     wing_planform :: StraightAnalyticWing
     wake_discretisation :: Union{Nothing, IncompleteVortexLattice}
+    segmentation :: Vector{Float64}
 
     function LAULLT(;U=[1.,0]::Vector{<:Real}, 
         wing_planform=make_rectangular(StraightAnalyticWing, 4, 4),
-        inner_solution_positions::Vector{<:Real}=collect(-1:2/12:1)[2:end-1],
+        inner_solution_positions::Vector{<:Real}=
+            (collect(-1:2/16:1)[1:end-1] + collect(-1:2/16:1)[2:end]) ./ 2,
         foil::ThinFoilGeometry=ThinFoilGeometry(0.5,x->0),
         kinematics=RigidKinematics2D(x->x, x->0, 0.0),
         regularisation=winckelmans_regularisation(), reg_dist_factor=1.5,
         num_inner_fourier_terms=8,
-        current_time=0.0, dt=0.025)
+        current_time=0.0, dt=0.025, segmentation=[])
 
         @assert(all(-1 .< inner_solution_positions .< 1), "Inner solution span"*
             " positions must be in (-1, 1). Given "*
@@ -57,6 +59,17 @@ mutable struct LAULLT
         semispan = wing_planform.semispan
         semichord = map(wing_planform.chord_fn, semispan .* 
             inner_solution_positions)
+        if length(segmentation) == 0
+            segmentation = vcat(-1: 2 / (length(inner_sol_positions)*4 + 1): 1)
+        else
+            @assert(segmentation[end] == 1)
+            @assert(segmentation[1] == -1)
+            if length(segmentation)-2 < length(inner_sol_positions)
+                @warn("Segmentation for outer solution is less refined than"*
+                    " inner solution. IE length(segmenation)-1 < "*
+                    "length(inner_solution_positions")
+            end
+        end
         foils = map(
             sc->ThinFoilGeometry(sc, foil.camber_line, foil.camber_slope),
             semichord)
@@ -69,7 +82,8 @@ mutable struct LAULLT
         for i = 1 : length(inner_probs)
             initialise(inner_probs[i])
         end
-        return new(inner_probs, inner_solution_positions, wing_planform, nothing)
+        return new(inner_probs, inner_solution_positions, wing_planform, nothing,
+            segmentation)
     end
 end
 
@@ -180,7 +194,7 @@ function construct_wake_lattice(a::LAULLT)
     semispan = a.wing_planform.semispan
     iypts = semispan * a.inner_sol_positions # inner y solution posn.
     #ypts = vcat([-semispan], (iypts[1:end-1] + iypts[2:end])/2, [semispan])
-    ypts = collect(-semispan: semispan/20 : semispan)
+    ypts = semispan .* a.segmentation
     cypts = (ypts[1:end-1] + ypts[2:end]) ./ 2
     #@assert(length(ypts) == ni+1)
     vertices = zeros(np+1, length(ypts), 3)   # To make the mesh in the wake.
@@ -277,13 +291,49 @@ function to_vtk(a::LAULLT, filename::String)
     return
 end
 
-function lift_coefficient(a::LAULLT)
-    @error("TODO")
-    return
+# Returns local C_l * chord and C_d * chord as spline.
+function lift_and_drag_coefficient_splines(a::LAULLT)
+    semispan = a.wing_planform.semispan
+    ypts = semispan * a.inner_sol_positions
+    eypts = vcat([-semispan], ypts, [semispan])
+    lifts = zeros(length(eypts))
+    drags = zeros(length(eypts))
+    lifts[1] = 0
+    drags[1] = 0
+    for i = 1 : length(eypts)-2
+        lifts[i+1], drags[i+1] = lift_and_drag_coefficients(a.inner_sols[i])
+        lifts[i+1] *= chord(a.wing_planform, a.inner_sol_positions[i])
+        drags[i+1] *= chord(a.wing_planform, a.inner_sol_positions[i])
+    end
+    lifts[end] = 0
+    drags[end] = 0
+    ls = CubicSpline{Float64}(eypts, lifts)
+    ds = CubicSpline{Float64}(eypts, drags)
+    return ls, ds
+end
+
+function lift_and_drag_coefficients(a::LAULLT, y::Real)
+    semispan = a.wing.semispan
+    @assert(-semispan <= y <= semispan)
+    ls, ds =  lift_and_drag_coefficient_splines(a)
+    c = chord(a.wing_planform, y)
+    return ls(y) * c, ds(y) * c
+end
+
+function lift_and_drag_coefficients(a::LAULLT)
+    semispan = a.wing_planform.semispan
+    warea = area(a.wing_planform)
+    ls, ds = lift_and_drag_coefficient_splines(a)
+    points, weights = FastGaussQuadrature.gausslegendre(50)
+    points, weights = linear_remap(points, weights, -1, 1, -semispan, semispan)
+    chords = map(x->chord(a.wing_planform, x), points)
+    liftc = sum(weights .* ls.(points) .* chords) / warea
+    dragc = sum(weights .* ds.(points) .* chords) / warea
+    return liftc, dragc
 end
 
 function csv_titles(a::LAULLT)
-    start = ["Time" "dt" "N" "N_Inner"]
+    start = ["Time" "dt" "N" "N_Inner" "CL" "CD"]
     for i = 1 : length(a.inner_sols)
         str = "I"*string(i)*"_"
         tmp = [str*"A0" str*"A1" str*"U3Dx" str*"U3Dz"]
@@ -295,7 +345,8 @@ end
 function csv_row(a::LAULLT)
     inner1 = a.inner_sols[1]
     ctime = inner1.current_time
-    start = [ctime inner1.dt length(inner1.te_particles.vorts) length(a.inner_sols)]
+    lift, drag = lift_and_drag_coefficients(a)
+    start = [ctime inner1.dt length(inner1.te_particles.vorts) length(a.inner_sols) lift drag]
     for i = 1 : length(a.inner_sols)
         inner = a.inner_sols[i]
         tmp = [inner.current_fourier_terms[1] inner.current_fourier_terms[2] inner.external_perturbation([0 0], ctime)[1,1] inner.external_perturbation([0 0], ctime)[1,2]]

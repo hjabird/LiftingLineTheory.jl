@@ -5,9 +5,6 @@
 #
 #==============================================================================#
 
-import FastGaussQuadrature
-import HCubature
-
 mutable struct HarmonicULLT
     angular_fq :: Real              # in rad / s
     free_stream_vel :: Real
@@ -556,9 +553,10 @@ function associated_chord_cm_heave(
 
     # Notes 6 pg 55
     @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
     k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
     num = - pi * theodorsen_fn(k) * a.free_stream_vel
-    den = 2 * a.wing.chord_fn(y)
+    den = 2
     return num / den
 end
 
@@ -568,16 +566,18 @@ function associated_chord_cm_pitch(
 
     # Notes 6 pg 55
     @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
     semichord = a.wing.chord_fn(y) / 2
     omega = a.angular_fq
     k = omega * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
     Ck = theodorsen_fn(k)
     t1 = pi * a.free_stream_vel / 2
-    t21 = semichord
+    t21 = semichord / 2
     t22 = im * omega * semichord^2 / (8 * a.free_stream_vel)
     t23 = im * a.free_stream_vel / omega
     t24 = -Ck * (semichord/2 + im * a.free_stream_vel / omega)
-    t2 = t21 + t22 + t23 + t24
+    t25 = -im / omega
+    t2 = t21 + t22 + t23 + t24 + t25
     t = t1 * t2
     return t
 end
