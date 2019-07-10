@@ -1,0 +1,42 @@
+#=
+A comparison of LAULLT and Sclavounos' theory for small amplitude
+heave of an AR8 wing.
+=#
+
+using LiftingLineTheory
+using PyPlot
+
+let
+    AR = 8
+    wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
+    srf = 4
+    k = srf / AR
+    amp = 0.01
+    omega = 2 * k
+    dt = 0.015
+    nsteps = 800
+
+    probs = HarmonicULLT(omega, wing)
+    compute_collocation_points!(probs)
+    compute_fourier_terms!(probs)
+    cls = lift_coefficient(probs) * im * omega * amp
+    figure()
+    ts = collect(0:dt:dt*nsteps)
+    clst = real.(cls .* exp.(im * omega * ts))
+    plot(ts, clst, label="Sclavounos")
+
+    prob = LAULLT(;kinematics=RigidKinematics2D(x->amp*cos(omega*x), x->0, 0),
+        wing_planform=wing, dt=dt)
+    
+    hdr = csv_titles(prob)
+    rows = zeros(0, length(hdr))
+    for i = 1 : nsteps
+        advance_one_step(prob)
+        rows = vcat(rows, csv_row(prob))
+    end
+    plot(rows[50:end, 1], rows[50:end, 5], label="LAULLT")
+
+    xlabel("Time")
+    ylabel("C_L")
+    legend()
+end
