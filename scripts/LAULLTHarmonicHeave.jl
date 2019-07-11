@@ -14,7 +14,8 @@ let
     amp = 0.25#0.01
     omega = 2 * k
     dt = 0.015
-    nsteps = 400
+    nsteps = 100
+
 	
 	println("Comparing LAULLT with Sclavounos in heave.")
 	println("k = ", k)
@@ -27,12 +28,16 @@ let
     compute_collocation_points!(probs)
     compute_fourier_terms!(probs)
     cls = lift_coefficient(probs) * im * omega * amp
-    figure()
+    #figure()
     ts = collect(0:dt:dt*nsteps)
     clst = real.(cls .* exp.(im * omega * ts))
-    plot(ts, clst, label="Sclavounos")
+    #plot(ts, clst, label="Sclavounos")
 
-    prob = LAULLT(;kinematics=RigidKinematics2D(x->amp*cos(omega*x), x->0, 0),
+    #prob = LAULLT(;kinematics=RigidKinematics2D(x->amp*cos(omega*x), x->0, 0),
+    #    wing_planform=wing, dt=dt)
+    #prob = LAULLT(;kinematics=RigidKinematics2D(x->0, x->deg2rad(5), 0),
+    #    wing_planform=wing, dt=dt)
+    prob = LAULLT(;kinematics=RigidKinematics2D(x->0, x->deg2rad(2)*cos(omega*x), 0),
         wing_planform=wing, dt=dt)
 	println("n_inner = ", length(prob.inner_sols))
     
@@ -42,14 +47,15 @@ let
     for i = 1 : nsteps
         print("\rStep ", i, " of ", nsteps, ".\t\t\t\t\t")
         advance_one_step(prob)
+        to_vtk(prob, "test_"*string(i))
         rows = vcat(rows, csv_row(prob))
     end
     println("\n")
 	println(size(rows))
-    plot(rows[50:end, 1], rows[50:end, 5], label="LAULLT")
+    #plot(rows[50:end, 1], rows[50:end, 5], label="LAULLT")
 
-    xlabel("Time")
-    ylabel("C_L")
-    legend()
+    #xlabel("Time")
+    #ylabel("C_L")
+    #legend()
     return prob, rows, hdr
 end

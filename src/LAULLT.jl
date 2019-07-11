@@ -151,13 +151,12 @@ function outer_induced_downwash(a::LAULLT)
     mes_pts = hcat(zeros(ni), span_positions, zeros(ni))
     outer_v = induced_velocity(a.wake_discretisation, mes_pts)
     common_v = outer_2D_induced_downwash(a)
-    display(outer_v[:,3])
-    display(common_v[:,2])
     @assert(size(outer_v)[1] == size(common_v)[1])
+    display(outer_v)
     for i = 1 : size(outer_v)[1]
         outer_v[i, :] -= [common_v[i,1], 0, common_v[i, 2]]
     end
-    return outer_v
+    return outer_v .* 0
 end
 
 """The translation that moves an inner 2D solution to the outer domain"""
@@ -199,7 +198,7 @@ function construct_wake_lattice(a::LAULLT)
     cypts = (ypts[1:end-1] + ypts[2:end]) ./ 2  # Between interpolation positions.
     vertices = zeros(np+1, length(ypts), 3)     # To make the mesh in the wake.
     vorticities = zeros(np, length(ypts)-1)     # Vortex ring strengths.
-    vorticity_acc = map(i->bound_vorticity(a.inner_sols[i]), 1:ni)
+    vorticity_acc = map(i->-bound_vorticity(a.inner_sols[i]), 1:ni)
     # One edge of the vortex lattice is the lifting line on x=0,z=0
     for iy = 1 : length(ypts)
         vertices[1, iy, :] = [0, ypts[iy], 0]
@@ -232,7 +231,7 @@ function construct_wake_lattice(a::LAULLT)
             vertices[ix + 1, iy, 3] = spl_z(ypts[iy])
         end
         if ix < np  # The final vortex particle is implicitly correctly set.
-            vorticity_acc += map(i->a.inner_sols[i].te_particles.vorts[np-ix+1], 1:ni)
+            vorticity_acc -= map(i->a.inner_sols[i].te_particles.vorts[np-ix+1], 1:ni)
             # spl_v = CubicSpline{Float64}(vcat([-semispan], iypts, [semispan]), vcat([0], vorticity_acc, [0]))
             spl_v = CubicSpline{Float64}(iypts, vorticity_acc)
             for iy = 1 : length(cypts)
