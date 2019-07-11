@@ -60,11 +60,11 @@ mutable struct LAULLT
         semichord = map(wing_planform.chord_fn, semispan .* 
             inner_solution_positions)
         if length(segmentation) == 0
-            segmentation = vcat(-1: 2 / (length(inner_sol_positions)*4 + 1): 1)
+            segmentation = vcat(-1: 2 / (length(inner_solution_positions)*4 + 1): 1)
         else
             @assert(segmentation[end] == 1)
             @assert(segmentation[1] == -1)
-            if length(segmentation)-2 < length(inner_sol_positions)
+            if length(segmentation)-2 < length(inner_solution_positions)
                 @warn("Segmentation for outer solution is less refined than"*
                     " inner solution. IE length(segmenation)-1 < "*
                     "length(inner_solution_positions")
