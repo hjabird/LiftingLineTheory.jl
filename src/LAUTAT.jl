@@ -191,7 +191,7 @@ function vel_normal_to_foil_surface(a::LAUTAT, mes_pnts::Vector{<:Real})
 end
 
 function compute_fourier_terms(a::LAUTAT)
-    points, weights = FastGaussQuadrature.gausslegendre(100)
+    points, weights = FastGaussQuadrature.gausslegendre(50)
     points, weights = linear_remap(points, weights, -1, 1, 0, pi)
     dwsh = vel_normal_to_foil_surface(a, -cos.(points))
     fterms = zeros(a.num_fourier_terms)
@@ -244,7 +244,7 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
     alpha = a.kinematics.AoA(a.current_time)
     alpha_dot = a.kinematics.dAoAdt(a.current_time)
     dzdt = a.kinematics.dzdt(a.current_time)
-    qpoints, qweights = FastGaussQuadrature.gausslegendre(100)
+    qpoints, qweights = FastGaussQuadrature.gausslegendre(50)
     qpoints, qweights = linear_remap(qpoints, qweights, -1, 1, 0, pi)
     # Compute the influence of the known part of the wake
     I_k = sum(

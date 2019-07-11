@@ -151,6 +151,8 @@ function outer_induced_downwash(a::LAULLT)
     mes_pts = hcat(zeros(ni), span_positions, zeros(ni))
     outer_v = induced_velocity(a.wake_discretisation, mes_pts)
     common_v = outer_2D_induced_downwash(a)
+    display(outer_v[:,3])
+    display(common_v[:,2])
     @assert(size(outer_v)[1] == size(common_v)[1])
     for i = 1 : size(outer_v)[1]
         outer_v[i, :] -= [common_v[i,1], 0, common_v[i, 2]]
@@ -192,21 +194,31 @@ function construct_wake_lattice(a::LAULLT)
     np = length(a.inner_sols[1].te_particles.vorts) # Number of Particles
     ni = length(a.inner_sols) # Number of Inner solutoins
     semispan = a.wing_planform.semispan
-    iypts = semispan * a.inner_sol_positions # inner y solution posn.
-    #ypts = vcat([-semispan], (iypts[1:end-1] + iypts[2:end])/2, [semispan])
-    ypts = semispan .* a.segmentation
-    cypts = (ypts[1:end-1] + ypts[2:end]) ./ 2
-    #@assert(length(ypts) == ni+1)
-    vertices = zeros(np+1, length(ypts), 3)   # To make the mesh in the wake.
-    vorticities = zeros(np, length(ypts)-1)
-    vorticity_acc = map(i->-bound_vorticity(a.inner_sols[i]), 1:ni)
+    iypts = semispan * a.inner_sol_positions    # inner y solution posn.
+    ypts = semispan .* a.segmentation           # interpolation positions
+    cypts = (ypts[1:end-1] + ypts[2:end]) ./ 2  # Between interpolation positions.
+    vertices = zeros(np+1, length(ypts), 3)     # To make the mesh in the wake.
+    vorticities = zeros(np, length(ypts)-1)     # Vortex ring strengths.
+    vorticity_acc = map(i->bound_vorticity(a.inner_sols[i]), 1:ni)
     # One edge of the vortex lattice is the lifting line on x=0,z=0
     for iy = 1 : length(ypts)
         vertices[1, iy, :] = [0, ypts[iy], 0]
     end
-    tmpvertex = zeros(ni, 2)
+    if np > 0
+        #spl_v = CubicSpline{Float64}(vcat([-semispan], iypts, [semispan]), vcat([0], vorticity_acc, [0]))
+        spl_v = CubicSpline{Float64}(iypts, vorticity_acc)
+        for iy = 1 : length(cypts)
+            vorticities[1, iy] = spl_v(cypts[iy])
+        end
+    end
+    # Now rings off the lifting line:
+    tmpvertex = zeros(ni, 2)    # Locations of particles in outer solution.
     # inner to outer translations
     translations = inner_to_outer_translation(a)
+    #   ix: particle index. ix = 1 is first shed particle. ix = np is most
+    #       recently shed particle.
+    #   iy: spanwise index. 1:ni is for actual inner solutions. 1:length(cypts)
+    #       is for interpolated values.
     for ix = 1:np
         for iy = 1:ni
             tmpvertex[iy, :] = a.inner_sols[iy].te_particles.positions[np-ix+1, :] + 
@@ -219,8 +231,9 @@ function construct_wake_lattice(a::LAULLT)
             vertices[ix + 1, iy, 2] = ypts[iy]
             vertices[ix + 1, iy, 3] = spl_z(ypts[iy])
         end
-        if ix < np
-            vorticity_acc -= map(i->a.inner_sols[i].te_particles.vorts[ix], 1:ni)
+        if ix < np  # The final vortex particle is implicitly correctly set.
+            vorticity_acc += map(i->a.inner_sols[i].te_particles.vorts[np-ix+1], 1:ni)
+            # spl_v = CubicSpline{Float64}(vcat([-semispan], iypts, [semispan]), vcat([0], vorticity_acc, [0]))
             spl_v = CubicSpline{Float64}(iypts, vorticity_acc)
             for iy = 1 : length(cypts)
                 vorticities[ix+1, iy] = spl_v(cypts[iy])
@@ -238,7 +251,7 @@ function apply_downwash_to_inner_solution!(a::LAULLT, downwashes::Matrix{<:Real}
         string(length(a.inner_sols))*" inner solutions.")
     @assert(size(downwashes)[2]==3, "Expected downwashes to have size (N, 3).")
     ni = length(a.inner_sols)
-    dw2d = hcat(downwashes[:, 1], downwashes[:, 2])
+    dw2d = hcat(downwashes[:, 1], downwashes[:, 3])
 
     function mk_uniform_field(x, dwuinform)
         vels = zeros(size(x)[1], 2)
