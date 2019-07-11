@@ -15,6 +15,13 @@ let
     omega = 2 * k
     dt = 0.015
     nsteps = 800
+	
+	println("Comparing LAULLT with Sclavounos in heave.")
+	println("k = ", k)
+	println("srf = ", srf)
+	println("AR = ", AR)
+	println("dt = ", dt)
+	println("amp = ", amp)
 
     probs = HarmonicULLT(omega, wing)
     compute_collocation_points!(probs)
@@ -27,6 +34,7 @@ let
 
     prob = LAULLT(;kinematics=RigidKinematics2D(x->amp*cos(omega*x), x->0, 0),
         wing_planform=wing, dt=dt)
+	println("n_inner = ", length(prob.inner_sols))
     
     hdr = csv_titles(prob)
     rows = zeros(0, length(hdr))
@@ -34,6 +42,7 @@ let
         advance_one_step(prob)
         rows = vcat(rows, csv_row(prob))
     end
+	println(size(rows))
     plot(rows[50:end, 1], rows[50:end, 5], label="LAULLT")
 
     xlabel("Time")
