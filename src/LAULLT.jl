@@ -64,10 +64,12 @@ mutable struct LAULLT
         else
             @assert(segmentation[end] == 1)
             @assert(segmentation[1] == -1)
-            if length(segmentation)-2 < length(inner_solution_positions)
+            if length(segmentation)-1 < length(inner_solution_positions)
                 @warn("Segmentation for outer solution is less refined than"*
                     " inner solution. IE length(segmenation)-1 < "*
-                    "length(inner_solution_positions")
+                    "length(inner_solution_positions. Lengths are "*
+                    string(length(segmentation))*" and "*
+                    string(length(inner_solution_positions))*"respectively.")
             end
         end
         foils = map(
@@ -152,11 +154,11 @@ function outer_induced_downwash(a::LAULLT)
     outer_v = induced_velocity(a.wake_discretisation, mes_pts)
     common_v = outer_2D_induced_downwash(a)
     @assert(size(outer_v)[1] == size(common_v)[1])
-    display(outer_v)
+    display(hcat(outer_v, common_v))
     for i = 1 : size(outer_v)[1]
         outer_v[i, :] -= [common_v[i,1], 0, common_v[i, 2]]
     end
-    return outer_v .* 0
+    return outer_v
 end
 
 """The translation that moves an inner 2D solution to the outer domain"""
@@ -181,6 +183,8 @@ function outer_2D_induced_downwash(a::LAULLT)
         for j = 1:size(opos)[1]
             opos[j, :] += translations[i, :]
         end
+        println(opos)
+        println(a.inner_sols[i].te_particles.vorts)
         dw[i, :] = particle_induced_velocity(opos, 
             a.inner_sols[i].te_particles.vorts, [0., 0.], kernel, 0.0)
     end
