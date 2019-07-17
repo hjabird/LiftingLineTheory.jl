@@ -1,3 +1,4 @@
+using PyPlot
 
 mutable struct ThinFoilGeometry
     semichord :: Real
@@ -76,6 +77,10 @@ mutable struct LAUTAT
     current_time :: Real
     dt :: Real
 
+    dw_positions :: Vector{Float64} # N points in [-1, 1]
+    dw_weights :: Vector{Float64}   # N points for quadrature of DW.
+    dw_values :: Matrix{Float64}    # (N, 2) induced velocities.
+
     function LAUTAT(;U=[1.,0]::Vector{<:Real}, 
         external_perturbation=(x,t)->zeros(size(x)[1], 2),
         foil=ThinFoilGeometry(0.5,x->0),
@@ -86,16 +91,86 @@ mutable struct LAUTAT
 
         return new(U, external_perturbation, kinematics, foil, te_particles, 
             regularisation, sqrt(U[1]^2 + U[2]^2) * dt * 1.5, num_fourier_terms, 
-            current_fourier_terms, last_fourier_terms, current_time, dt)
+            current_fourier_terms, last_fourier_terms, current_time, dt,
+            [], [], zeros(0,0))
     end
+end
+
+function advance_one_step(a::LAUTAT)
+    if(length(a.current_fourier_terms)==0)
+        fill_downwash_cache!(a, 50)
+        tmptime = a.current_time
+        a.current_time -= a.dt
+        a.current_fourier_terms = compute_fourier_terms(a)
+        a.last_fourier_terms = a.current_fourier_terms
+        a.current_time = tmptime
+        invalidate_downwash_cache!(a)
+    end        
+    wake_vels = te_wake_particle_velocities(a::LAUTAT)
+    a.te_particles.positions += wake_vels .* a.dt
+    invalidate_downwash_cache!(a)
+    a.current_time += a.dt
+    fill_downwash_cache!(a, 64)
+    shed_new_te_particle_with_zero_vorticity!(a)
+    adjust_last_shed_te_particle_for_kelvin_condition!(a)
+    a.last_fourier_terms = a.current_fourier_terms
+    a.current_fourier_terms = compute_fourier_terms(a)
+    return
+end
+
+function fill_downwash_cache!(a::LAUTAT, num_points::Int64)
+    @assert(num_points > 0)
+    # As a guess, the most challenging integrals are the oscillatory
+    # ones, so we'd like to have a quadrature suitable for them.
+	h = pi/num_points
+    points = (collect(range(0, pi, length=num_points+1))[1:end-1] + 
+        collect(range(0, pi, length=num_points+1))[2:end]) ./ 2
+	@assert(all(0 .<= points .<= pi))
+    weights = h .* ones(num_points)
+	@assert(length(weights) == length(points))
+    for i = 1 : length(points)
+        weights[i] = weights[i] * sin(points[i])
+        points[i] = - cos(points[i])
+    end
+    @assert(all(weights .> 0), "Weights: "*string(weights))
+    @assert(abs(sum(weights) - 2) < 0.02)
+    fpoints = foil_points(a, points)
+    vels = non_foil_ind_vel(a, fpoints)
+    a.dw_positions = points
+    a.dw_weights = weights
+    a.dw_values = vels
+    return
+end
+
+function add_particle_to_downwash_cache!(a::LAUTAT, ppos::Vector{Float32}, pvort::Real)
+    @assert(length(ppos) == 2)
+    @assert(length(a.dw_positions) > 0)
+    fpoints = foil_points(a, a.dw_positions)
+    vels = zeros(length(a.dw_positions), 2)
+    for i = 1 : length(a.dw_positions)
+        vels[i, :] = particle_induced_velocity(ppos, pvort, 
+            fpoints[i, :], a.regularisation, a.reg_dist)
+    end
+    a.dw_values += vels
+    return
+end
+
+function invalidate_downwash_cache!(a::LAUTAT)
+    a.dw_values = zeros(0,0)
+    a.dw_positions = []
+    a.dw_weights = []
+    return
 end
 
 function initialise(a::LAUTAT)
     tmptime = a.current_time
     a.current_time -= a.dt
+    fill_downwash_cache!(a, 64)
     a.current_fourier_terms = compute_fourier_terms(a)
     a.last_fourier_terms = a.current_fourier_terms
     a.current_time = tmptime
+    invalidate_downwash_cache!(a)
+    return
 end
 
 function foil_points(a::LAUTAT, points::Vector{<:Real})
@@ -132,11 +207,11 @@ function bound_vorticity(a::LAUTAT)
 end
 
 function foil_induced_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})
-    points, weights = FastGaussQuadrature.gausslegendre(50)
+    points, weights = FastGaussQuadrature.gausslegendre(64)
     vortex_pos = foil_points(a, points)
     weights .*= a.foil.semichord
     strengths = map(x->bound_vorticity_density(a, x), points).*weights
-    kernel = winckelmans_regularisation()
+    kernel = a.regularisation
     vels = particle_induced_velocity(vortex_pos, strengths, mes_pnts, 
         kernel, a.reg_dist)    
     return vels
@@ -160,7 +235,7 @@ end
 
 function te_wake_particle_velocities(a::LAUTAT)
     reg_dist = a.reg_dist
-    kernel = winckelmans_regularisation()
+    kernel = a.regularisation
     vel_nf = non_foil_ind_vel(a, a.te_particles.positions)
     vel_foil = foil_induced_vel(a, a.te_particles.positions)
     vels = vel_nf + vel_foil
@@ -169,10 +244,10 @@ function te_wake_particle_velocities(a::LAUTAT)
     return vels
 end
 
-function vel_normal_to_foil_surface(a::LAUTAT, mes_pnts::Vector{<:Real})
+function vel_normal_to_foil_surface(a::LAUTAT)
+    mes_pnts = a.dw_positions
     @assert(all(-1 .<= mes_pnts .<= 1), "Foil in [-1,1]")
-    fpoints = foil_points(a, mes_pnts)
-    field_vels = non_foil_ind_vel(a, fpoints)
+    field_vels = deepcopy(a.dw_values)
     ext_vels = a.U
     alpha = a.kinematics.AoA(a.current_time)
     alpha_dot = a.kinematics.dAoAdt(a.current_time)
@@ -191,12 +266,16 @@ function vel_normal_to_foil_surface(a::LAUTAT, mes_pnts::Vector{<:Real})
 end
 
 function compute_fourier_terms(a::LAUTAT)
-    points, weights = FastGaussQuadrature.gausslegendre(50)
-    points, weights = linear_remap(points, weights, -1, 1, 0, pi)
-    dwsh = vel_normal_to_foil_surface(a, -cos.(points))
+    points, weights = deepcopy(a.dw_positions), deepcopy(a.dw_weights)
+	weights = weights ./ sqrt.(1 .- points.^2)
+	points = acos.(.-points)
+    dwsh = vel_normal_to_foil_surface(a)
     fterms = zeros(a.num_fourier_terms)
+	#cweights = map(i->sum(dwsh[1:i] .* weights[1:i] .* cos.(3*points[1:i])), 1:length(points))
+	#plot(points, cweights, "rx")
     for i = 1 : a.num_fourier_terms
-        qpoints = cos.((i-1)*points) .* dwsh * 2 /(sqrt(a.U[1]^2 + a.U[2]^2) * pi)
+        qpoints = cos.((i-1)*points) .* dwsh * 2 /
+            (sqrt(a.U[1]^2 + a.U[2]^2) * pi)
         fterms[i] = sum(qpoints .* weights)
     end
     fterms[1] /= -2
@@ -244,12 +323,12 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
     alpha = a.kinematics.AoA(a.current_time)
     alpha_dot = a.kinematics.dAoAdt(a.current_time)
     dzdt = a.kinematics.dzdt(a.current_time)
-    qpoints, qweights = FastGaussQuadrature.gausslegendre(50)
+    qpoints, qweights = FastGaussQuadrature.gausslegendre(64)
     qpoints, qweights = linear_remap(qpoints, qweights, -1, 1, 0, pi)
     # Compute the influence of the known part of the wake
     I_k = sum(
-        (vel_normal_to_foil_surface(a, -cos.(qpoints)) .* (cos.(qpoints).-1) .* 
-        2*a.foil.semichord) .* qweights)
+        (vel_normal_to_foil_surface(a) .* (-a.dw_positions .- 1) .* 
+        2*a.foil.semichord ./ sqrt.(1 .-a.dw_positions.^2)) .* a.dw_weights)
     # And the bit that will be caused by the new particle
     posn = a.te_particles.positions[end,:]
     rot = [cos(alpha) -sin(alpha); sin(alpha) cos(alpha)]
@@ -266,29 +345,12 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
     # And now work out the vorticity
     vort = - (I_k + total_te_vorticity(a)) / (1 + I_uk)
     a.te_particles.vorts[end] = vort
+    add_particle_to_downwash_cache!(a, posn, vort)
     return
 end
 
 function total_te_vorticity(a::LAUTAT)
     return sum(a.te_particles.vorts)
-end
-
-function advance_one_step(a::LAUTAT)
-    if(length(a.current_fourier_terms)==0)
-        tmptime = a.current_time
-        a.current_time -= a.dt
-        a.current_fourier_terms = compute_fourier_terms(a)
-        a.last_fourier_terms = a.current_fourier_terms
-        a.current_time = tmptime
-    end        
-    wake_vels = te_wake_particle_velocities(a::LAUTAT)
-    a.te_particles.positions += wake_vels .* a.dt
-    a.current_time += a.dt
-    shed_new_te_particle_with_zero_vorticity!(a)
-    adjust_last_shed_te_particle_for_kelvin_condition!(a)
-    a.last_fourier_terms = a.current_fourier_terms
-    a.current_fourier_terms = compute_fourier_terms(a)
-    return
 end
 
 function leading_edge_suction_force(a::LAUTAT, density::Real)
@@ -327,28 +389,10 @@ function moment_coefficient(a::LAUTAT, xref::Real)
     
     # Term 3 includes a weakly singular integral. We use singularity subtraction
     # to get round it.
-    wake_ind_vel_ssm = (rot * non_foil_ind_vel(a, foil_points(a, [-1]))')[1,1]
-    points, weights = FastGaussQuadrature.gausslegendre(50)
-    normal_ind_vel_vect = non_foil_ind_vel(a, foil_points(a, points))
-    normal_ind_velxr = zeros(size(normal_ind_vel_vect)[1])
-    for i = 1 : size(normal_ind_vel_vect)[1]
-        normal_ind_velxr[i] = (rot * normal_ind_vel_vect[i, :])[1]
-    end 
-    tm1 = map(x->bound_vorticity_density(a, x), points)
-    tm2 = (normal_ind_velxr .- wake_ind_vel_ssm)
-    t2 = a.foil.semichord * sum(weights .*
-        tm1 .*
-        tm2)
-    t2 += wake_ind_vel_ssm * sqrt(a.U[1]^2 +  a.U[2]^2) * 2 *
-        a.foil.semichord * pi * (a.current_fourier_terms[1] +
-            a.current_fourier_terms[2]/2)
-
-    # Term 3 includes a weakly singular integral. We use singularity subtraction
-    # to get round it.
     wake_ind_vel_ssm = -1 * 
         (rot * non_foil_ind_vel(a, foil_points(a, [-1]))')[1,1]
-    points, weights = FastGaussQuadrature.gausslegendre(50)
-    normal_ind_vel_vect = non_foil_ind_vel(a, foil_points(a, points))
+    points, weights = a.dw_positions, a.dw_weights
+    normal_ind_vel_vect = a.dw_values
     normal_ind_velxr = zeros(size(normal_ind_vel_vect)[1])
     for i = 1 : size(normal_ind_vel_vect)[1]
         normal_ind_velxr[i] = points[i] * (rot * normal_ind_vel_vect[i, :])[1]
@@ -388,8 +432,8 @@ function aerofoil_normal_force(a::LAUTAT, density::Real)
     # Term 2 includes a weakly singular integral. We use singularity subtraction
     # to get round it.
     wake_ind_vel_ssm = (rot * non_foil_ind_vel(a, foil_points(a, [-1]))')[1,1]
-    points, weights = FastGaussQuadrature.gausslegendre(50)
-    normal_ind_vel_vect = non_foil_ind_vel(a, foil_points(a, points))
+    points, weights = a.dw_positions, a.dw_weights
+    normal_ind_vel_vect = a.dw_values
     normal_ind_velxr = zeros(size(normal_ind_vel_vect)[1])
     for i = 1 : size(normal_ind_vel_vect)[1]
         normal_ind_velxr[i] = (rot * normal_ind_vel_vect[i, :])[1]

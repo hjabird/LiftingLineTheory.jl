@@ -33,4 +33,5 @@ let
     end
     xlabel("Time")
     ylabel("C_L normalised with theodorsen CL")
+    return 
 end
