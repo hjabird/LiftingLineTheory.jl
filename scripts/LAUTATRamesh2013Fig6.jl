@@ -4,6 +4,7 @@ Replicate Figure 6 from Ramesh 2013
 
 using LiftingLineTheory
 using PyPlot
+using CVortex
 
 let
     rampfn = x->eldredge_ramp(x, 1, 3, 4, 6,  11, 1, 1)
@@ -21,18 +22,20 @@ let
     nsteps = Int64(ceil(7/dtstar))
     for i = 1 : nsteps
         advance_one_step(prob)
-        to_vtk(prob, "my_save_path_"*string(i))
+        #to_vtk(prob, "my_save_path_"*string(i))
         rows = vcat(rows, csv_row(prob))
     end
 
     figure()
-    plot(rows[:, 1], rows[:, 9], "r-")
+    ax = gca()
+    ax.imshow(imread("scripts/Ramesh13ref/Fig6.PNG"), extent=[0, 7, -20, 40])
+    ax.set_aspect("auto")
+    p = plot(rows[:, 1], rad2deg.(rows[:, 6]), "g-", label="AoA")
+    ylabel("AoA")
+    axis([0, 7, -20, 40])
+    ax2 = twinx(ax)
+    plot(rows[:, 1], rows[:, 9], "r-", label="C_L")
     ylabel("Cl")
     axis([0, 7, -2, 4])
     xlabel("Time")
-    ax = gca()
-    ax2 = twinx(ax)
-    p = plot(rows[:, 1], rad2deg.(rows[:, 6]), "g-")
-    axis([0, 7, -20, 40])
-    ylabel("AoA")
 end
