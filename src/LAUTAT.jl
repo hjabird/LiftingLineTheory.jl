@@ -254,13 +254,11 @@ function vel_normal_to_foil_surface(a::LAUTAT)
     dzdt = a.kinematics.dzdt(a.current_time)
     slopes= map(a.foil.camber_slope, mes_pnts)
     rot = [cos(alpha) -sin(alpha); sin(alpha) cos(alpha)]
-    ext_vels = rot * ext_vels
     for i = 1 : length(mes_pnts)
-        field_vels[i, :] = rot * field_vels[i, :]
+        field_vels[i, :] = rot * (field_vels[i, :] + ext_vels)
     end
-    wash = (slopes .* (ext_vels[1] .+ dzdt * sin(alpha) .+ field_vels[:, 1])
-        .- ext_vels[2]
-        .- alpha_dot * a.foil.semichord .* (mes_pnts .- a.kinematics.pivot_position)
+    wash = (slopes .* (dzdt * sin(alpha) .+ field_vels[:, 1])
+        .- alpha_dot * (a.foil.semichord .* mes_pnts .- a.kinematics.pivot_position)
         .+ dzdt * cos(alpha) .- field_vels[:, 2])
     return wash
 end
@@ -271,8 +269,6 @@ function compute_fourier_terms(a::LAUTAT)
 	points = acos.(.-points)
     dwsh = vel_normal_to_foil_surface(a)
     fterms = zeros(a.num_fourier_terms)
-	#cweights = map(i->sum(dwsh[1:i] .* weights[1:i] .* cos.(3*points[1:i])), 1:length(points))
-	#plot(points, cweights, "rx")
     for i = 1 : a.num_fourier_terms
         qpoints = cos.((i-1)*points) .* dwsh * 2 /
             (sqrt(a.U[1]^2 + a.U[2]^2) * pi)
@@ -284,7 +280,7 @@ end
 
 function pivot_coordinate(foil::ThinFoilGeometry, kinem::RigidKinematics2D, t::Real)
     pos = [0., 0.]
-    pos[1] = kinem.pivot_position * foil.semichord
+    pos[1] = kinem.pivot_position
     pos[2] = kinem.z_pos(t)
     return pos
 end
@@ -323,15 +319,17 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
     alpha = a.kinematics.AoA(a.current_time)
     alpha_dot = a.kinematics.dAoAdt(a.current_time)
     dzdt = a.kinematics.dzdt(a.current_time)
-    qpoints, qweights = FastGaussQuadrature.gausslegendre(64)
-    qpoints, qweights = linear_remap(qpoints, qweights, -1, 1, 0, pi)
     # Compute the influence of the known part of the wake
+    ikpoints = a.dw_positions
+    ikweights = a.dw_weights ./ sqrt.(1 .- ikpoints.^2)
     I_k = sum(
-        (vel_normal_to_foil_surface(a) .* (-a.dw_positions .- 1) .* 
-        2*a.foil.semichord ./ sqrt.(1 .-a.dw_positions.^2)) .* a.dw_weights)
+        (vel_normal_to_foil_surface(a) .* (-ikpoints .- 1) .* 
+        2*a.foil.semichord ) .* ikweights)
     # And the bit that will be caused by the new particle
     posn = a.te_particles.positions[end,:]
     rot = [cos(alpha) -sin(alpha); sin(alpha) cos(alpha)]
+    qpoints, qweights = FastGaussQuadrature.gausslegendre(64)
+    qpoints, qweights = linear_remap(qpoints, qweights, -1, 1, 0, pi)
     function I_uk_integrand(theta::Vector{<:Real})
         foil_pos = -cos.(theta)
         foil_coords = foil_points(a, foil_pos)
@@ -441,12 +439,11 @@ function aerofoil_normal_force(a::LAUTAT, density::Real)
     tm1 = map(x->bound_vorticity_density(a, x), points)
     tm2 = (normal_ind_velxr .- wake_ind_vel_ssm)
     t2 = a.foil.semichord * density * sum(weights .*
-        tm1 .*
-        tm2)
+        tm1 .* tm2)
     t2 += density * wake_ind_vel_ssm * sqrt(a.U[1]^2 +  a.U[2]^2) * 2 *
         a.foil.semichord * pi * (a.current_fourier_terms[1] +
             a.current_fourier_terms[2]/2)
-    return t1 + t2
+    return t1 - t2
 end
 
 function lift_and_drag_coefficients(a::LAUTAT)
