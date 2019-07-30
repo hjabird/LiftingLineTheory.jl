@@ -563,7 +563,7 @@ end
 function associated_chord_cm_pitch(
     a :: HarmonicULLT,
     y :: Real)
-
+#=
     # Notes 6 pg 55
     @assert(abs(y) <= a.wing.semispan)
     @assert(a.angular_fq > 0)
@@ -580,6 +580,21 @@ function associated_chord_cm_pitch(
     t2 = t21 + t22 + t23 + t24 + t25
     t = t1 * t2
     return t
+    =#
+    # Notes 6 pg 71
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
+    chord = a.wing.chord_fn(y)
+    omega = a.angular_fq
+    k = omega * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    Ck = theodorsen_fn(k)
+    t1 = pi * a.free_stream_vel
+    t21 = 1/8
+    t22 = omega * chord^2 * im / 64
+    t23 = -Ck * (chord/8 + a.free_stream_vel * im  / (2 * omega))
+    t2 = t21 + t22 + t23
+    t = t1 * t2
+    return -t
 end
 
 function f_eq(

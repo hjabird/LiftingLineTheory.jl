@@ -1,5 +1,3 @@
-using PyPlot
-
 mutable struct ThinFoilGeometry
     semichord :: Real
     camber_line :: Function # In [-1, 1]
@@ -98,7 +96,7 @@ end
 
 function advance_one_step(a::LAUTAT)
     if(length(a.current_fourier_terms)==0)
-        fill_downwash_cache!(a, 50)
+        fill_downwash_cache!(a, 64)
         tmptime = a.current_time
         a.current_time -= a.dt
         a.current_fourier_terms = compute_fourier_terms(a)

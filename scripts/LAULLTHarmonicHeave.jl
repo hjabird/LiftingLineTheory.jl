@@ -7,14 +7,14 @@ using LiftingLineTheory
 using PyPlot
 
 let
-    AR = 8
+    AR = 4
     wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
     srf = 4
     k = srf / AR
     amp = 0.25#0.01
     omega = 2 * k
     dt = 0.015
-    nsteps = 100
+    nsteps = 3
 
 	
 	println("Comparing LAULLT with Sclavounos in heave.")
@@ -33,12 +33,16 @@ let
     clst = real.(cls .* exp.(im * omega * ts))
     #plot(ts, clst, label="Sclavounos")
 
+    segs = collect(-1:2/8:1)
+    isolp = (segs[1:end-1] + segs[2:end])/2
     #prob = LAULLT(;kinematics=RigidKinematics2D(x->amp*cos(omega*x), x->0, 0),
     #    wing_planform=wing, dt=dt)
     #prob = LAULLT(;kinematics=RigidKinematics2D(x->0, x->deg2rad(5), 0),
     #    wing_planform=wing, dt=dt)
     prob = LAULLT(;kinematics=RigidKinematics2D(x->0, x->deg2rad(2)*cos(omega*x), 0),
-        wing_planform=wing, dt=dt)
+        wing_planform=wing, dt=dt,
+        inner_solution_positions=isolp,
+        segmentation=segs)
 	println("n_inner = ", length(prob.inner_sols))
     
     hdr = csv_titles(prob)
