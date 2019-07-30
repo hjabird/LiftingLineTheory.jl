@@ -83,12 +83,15 @@ mutable struct LAUTAT
         external_perturbation=(x,t)->zeros(size(x)[1], 2),
         foil=ThinFoilGeometry(0.5,x->0),
         kinematics=RigidKinematics2D(x->x, x->0, 0.0), te_particles=ParticleGroup2D(),
-        regularisation=winckelmans_regularisation(), reg_dist_factor=1.5,
+        regularisation=winckelmans_regularisation(), reg_dist=-99.234,
         num_fourier_terms=8, current_fourier_terms=[], last_fourier_terms=[],
         current_time=0.0, dt=0.025)
-
+		if reg_dist==-99.234
+			reg_dist=sqrt(U[1]^2 + U[2]^2) * dt
+		end
+		@assert(reg_dist >= 0)		
         return new(U, external_perturbation, kinematics, foil, te_particles, 
-            regularisation, sqrt(U[1]^2 + U[2]^2) * dt * 1.5, num_fourier_terms, 
+            regularisation, reg_dist, num_fourier_terms, 
             current_fourier_terms, last_fourier_terms, current_time, dt,
             [], [], zeros(0,0))
     end

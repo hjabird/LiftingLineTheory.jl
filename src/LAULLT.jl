@@ -46,24 +46,28 @@ mutable struct LAULLT
             (collect(-1:2/16:1)[1:end-1] + collect(-1:2/16:1)[2:end]) ./ 2,
         foil::ThinFoilGeometry=ThinFoilGeometry(0.5,x->0),
         kinematics=RigidKinematics2D(x->x, x->0, 0.0),
-        regularisation=winckelmans_regularisation(), reg_dist_factor=1.5,
+        regularisation=winckelmans_regularisation(), reg_dist=NaN,
         num_inner_fourier_terms=8,
         current_time=0.0, dt=0.025, segmentation=[])
 
         @assert(all(-1 .< inner_solution_positions .< 1), "Inner solution span"*
             " positions must be in (-1, 1). Given "*
             string(inner_solution_positions))
-        @assert(kinematics.pivot_position==0, "Kinematics pivot position "*
-            "must be the midchord (0.0).")
+        @assert(length(U)==2, "U must be a vector of length two: [u, w]")
+        @assert(isnan(reg_dist) ? true : reg_dist>=0, 
+            "Regularisation distance must be positive.")
 
         semispan = wing_planform.semispan
         semichord = map(wing_planform.chord_fn, semispan .* 
             inner_solution_positions)
+        if isnan(reg_dist)
+            reg_dist = dt * 1.5 * sqrt(U[1]^2 + U[2]^2)
+        end
         if length(segmentation) == 0
             segmentation = vcat(-1: 2 / (length(inner_solution_positions)*4 + 1): 1)
         else
-            @assert(segmentation[end] == 1)
-            @assert(segmentation[1] == -1)
+            @assert(segmentation[end] == 1, "Segmentation must be in [-1, 1]")
+            @assert(segmentation[1] == -1, "Segmentation must be in [-1, 1]")
             if length(segmentation)-1 < length(inner_solution_positions)
                 @warn("Segmentation for outer solution is less refined than"*
                     " inner solution. IE length(segmenation)-1 < "*
@@ -77,7 +81,7 @@ mutable struct LAULLT
             semichord)
         inner_probs = map(
             i->LAUTAT(;U=U, foil=foils[i], kinematics=kinematics,
-                regularisation=regularisation, reg_dist_factor=reg_dist_factor,
+                regularisation=regularisation, reg_dist=reg_dist,
                 num_fourier_terms = num_inner_fourier_terms, 
                 current_time=current_time, dt=dt),
             1:length(semichord))
@@ -87,6 +91,19 @@ mutable struct LAULLT
         return new(inner_probs, inner_solution_positions, wing_planform, nothing,
             segmentation)
     end
+end
+
+function advance_one_step(a::LAULLT)
+    if typeof(a.wake_discretisation) == Nothing
+        a.wake_discretisation = construct_wake_lattice(a)
+    end
+    outer_downwashes = outer_induced_downwash(a)
+    apply_downwash_to_inner_solution!(a, outer_downwashes)
+    for i = 1 : length(a.inner_sols)
+        advance_one_step(a.inner_sols[i])
+    end
+    a.wake_discretisation = construct_wake_lattice(a)
+    return
 end
 
 #=
@@ -106,46 +123,6 @@ function induced_velocity(a::IncompleteVortexLattice, mes_pnts::Matrix{<:Real})
     return vels
 end
 
-function to_filaments(a::IncompleteVortexLattice)
-    nif = (size(a.vertices)[1]-1) * (size(a.vertices)[2])   # i-dir (streamwise)
-    njf = (size(a.vertices)[1]-1) * (size(a.vertices)[2]-1) # j-dir (spanwise)
-    nf = nif + njf
-    fstarts = zeros(nf, 3)
-    fends = zeros(nf, 3)
-    fstrs = zeros(nf)
-    acc = 1
-    function rstr(i, j)
-        @assert(i > 0, "You're not including i=1!")
-        if (i > 0) && (j > 0) && (i <= size(a.strengths)[1]) && (j <= size(a.strengths)[2])
-            ret = a.strengths[i, j]
-        else
-            ret = 0
-        end
-        return ret
-    end
-    # Streamwise filaments. (i --- i+1)
-    for i = 1 : size(a.vertices)[1]-1
-        for j = 1 : size(a.vertices)[2]
-            fstarts[acc, :] = a.vertices[i, j, :]
-            fends[acc, :] = a.vertices[i+1, j, :]
-            fstrs[acc] = rstr(i, j) - rstr(i, j-1)
-            acc += 1
-        end
-    end
-    @assert(acc - 1 == nif)
-    # Spanwise filaments. (j --- j+1)
-    for i = 2 : size(a.vertices)[1]
-        for j = 1 : size(a.vertices)[2]-1
-            fstarts[acc, :] = a.vertices[i, j, :]
-            fends[acc, :] = a.vertices[i, j+1, :]
-            fstrs[acc] = rstr(i, j) - rstr(i+1, j)
-            acc += 1
-        end
-    end
-    @assert(acc - 1 == nif + njf)
-    return fstarts, fends, fstrs
-end
-
 """The 3D downwash on the lifting line collocation points."""
 function outer_induced_downwash(a::LAULLT)
     span_positions = a.wing_planform.semispan * a.inner_sol_positions
@@ -154,7 +131,6 @@ function outer_induced_downwash(a::LAULLT)
     outer_v = induced_velocity(a.wake_discretisation, mes_pts)
     common_v = outer_2D_induced_downwash(a)
     @assert(size(outer_v)[1] == size(common_v)[1])
-    display(hcat(outer_v, common_v))
     for i = 1 : size(outer_v)[1]
         outer_v[i, :] -= [common_v[i,1], 0, common_v[i, 2]]
     end
@@ -183,8 +159,8 @@ function outer_2D_induced_downwash(a::LAULLT)
         for j = 1:size(opos)[1]
             opos[j, :] += translations[i, :]
         end
-        println(opos)
-        println(a.inner_sols[i].te_particles.vorts)
+        #println(opos)
+        #println(a.inner_sols[i].te_particles.vorts)
         dw[i, :] = particle_induced_velocity(opos, 
             a.inner_sols[i].te_particles.vorts, [0., 0.], kernel, 0.0)
     end
@@ -243,8 +219,50 @@ function construct_wake_lattice(a::LAULLT)
             end
         end
     end
+    @assert(all(isfinite.(vorticities)), "Not all vortex rings had finite strengths.")
+    @assert(all(isfinite.(vertices)), "Not all vertices had finite coordinates.")
     mesh = IncompleteVortexLattice(vertices, vorticities)
     return mesh
+end
+
+function to_filaments(a::IncompleteVortexLattice)
+    nif = (size(a.vertices)[1]-1) * (size(a.vertices)[2])   # i-dir (streamwise)
+    njf = (size(a.vertices)[1]-1) * (size(a.vertices)[2]-1) # j-dir (spanwise)
+    nf = nif + njf
+    fstarts = zeros(nf, 3)
+    fends = zeros(nf, 3)
+    fstrs = zeros(nf)
+    acc = 1
+    function rstr(i, j)
+        @assert(i > 0, "You're not including i=1!")
+        if (i > 0) && (j > 0) && (i <= size(a.strengths)[1]) && (j <= size(a.strengths)[2])
+            ret = a.strengths[i, j]
+        else
+            ret = 0
+        end
+        return ret
+    end
+    # Streamwise filaments. (i --- i+1)
+    for i = 1 : size(a.vertices)[1]-1
+        for j = 1 : size(a.vertices)[2]
+            fstarts[acc, :] = a.vertices[i, j, :]
+            fends[acc, :] = a.vertices[i+1, j, :]
+            fstrs[acc] = rstr(i, j) - rstr(i, j-1)
+            acc += 1
+        end
+    end
+    @assert(acc - 1 == nif)
+    # Spanwise filaments. (j --- j+1)
+    for i = 2 : size(a.vertices)[1]
+        for j = 1 : size(a.vertices)[2]-1
+            fstarts[acc, :] = a.vertices[i, j, :]
+            fends[acc, :] = a.vertices[i, j+1, :]
+            fstrs[acc] = rstr(i-1, j) - rstr(i, j)
+            acc += 1
+        end
+    end
+    @assert(acc - 1 == nif + njf)
+    return fstarts, fends, fstrs
 end
 
 function apply_downwash_to_inner_solution!(a::LAULLT, downwashes::Matrix{<:Real})
@@ -253,6 +271,7 @@ function apply_downwash_to_inner_solution!(a::LAULLT, downwashes::Matrix{<:Real}
         string(size(downwashes)[1])*" downwashes and "*
         string(length(a.inner_sols))*" inner solutions.")
     @assert(size(downwashes)[2]==3, "Expected downwashes to have size (N, 3).")
+    @assert(all(isfinite.(downwashes)), "Not all downwash values are finite.")
     ni = length(a.inner_sols)
     dw2d = hcat(downwashes[:, 1], downwashes[:, 3])
 
@@ -268,19 +287,6 @@ function apply_downwash_to_inner_solution!(a::LAULLT, downwashes::Matrix{<:Real}
         a.inner_sols[i].external_perturbation = 
             (x,t)->mk_uniform_field(x, dw2d[i, :])
     end
-    return
-end
-
-function advance_one_step(a::LAULLT)
-    if typeof(a.wake_discretisation) == Nothing
-        a.wake_discretisation = construct_wake_lattice(a)
-    end
-    outer_downwashes = outer_induced_downwash(a)
-    apply_downwash_to_inner_solution!(a, outer_downwashes)
-    for i = 1 : length(a.inner_sols)
-        advance_one_step(a.inner_sols[i])
-    end
-    a.wake_discretisation = construct_wake_lattice(a)
     return
 end
 
