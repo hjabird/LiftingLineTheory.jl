@@ -555,7 +555,7 @@ function associated_chord_cm_heave(
     @assert(abs(y) <= a.wing.semispan)
     @assert(a.angular_fq > 0)
     k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
-    num = - pi * theodorsen_fn(k) * a.free_stream_vel
+    num = - pi * theodorsen_fn(k) #* a.free_stream_vel
     den = 2
     return num / den
 end
@@ -581,6 +581,7 @@ function associated_chord_cm_pitch(
     t = t1 * t2
     return t
     =#
+    #=
     # Notes 6 pg 71
     @assert(abs(y) <= a.wing.semispan)
     @assert(a.angular_fq > 0)
@@ -594,7 +595,20 @@ function associated_chord_cm_pitch(
     t23 = -Ck * (chord/8 + a.free_stream_vel * im  / (2 * omega))
     t2 = t21 + t22 + t23
     t = t1 * t2
-    return -t
+    return -t=#
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
+    chord = a.wing.chord_fn(y)
+    omega = a.angular_fq
+    k = omega * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    Ck = theodorsen_fn(k)
+    t1 = - pi * im / (2 * chord)
+    t21 = - im
+    t22 = k / 4
+    t23 = (im + 2 / k) * Ck
+    t2 = t21 + t22 + t23
+    t = t1 * t2
+    return t
 end
 
 function f_eq(
