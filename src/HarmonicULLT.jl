@@ -501,13 +501,15 @@ function associated_chord_cl_pitch(
     a :: HarmonicULLT,
     y :: Real)
 
-    # Notes 5 pg 53
+    # Notes #7 pg 4
     @assert(abs(y) <= a.wing.semispan)
     semichord = a.wing.chord_fn(y) / 2 
+    U = a.free_stream_vel
+    omega = a.angular_fq
+    k = omega * a.wing.chord_fn(y) / (2 * U)
     t1 = pi * semichord
-    k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
-    t21 = 2 * a.free_stream_vel * theodorsen_fn(k) * pi / (im * a.angular_fq)
-    t22 = 1 + im * k / 2
+    t21 = theodorsen_fn(k) * pi
+    t22 = semichord - 2 * U * im  / omega
     t2 = t21 * t22
     return t1 + t2
 end
@@ -551,11 +553,11 @@ function associated_chord_cm_heave(
     a :: HarmonicULLT,
     y :: Real)
 
-    # Notes 6 pg 55
+    # Notes #7 pg 4
     @assert(abs(y) <= a.wing.semispan)
     @assert(a.angular_fq > 0)
     k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
-    num = - pi * theodorsen_fn(k) #* a.free_stream_vel
+    num = - pi * theodorsen_fn(k)
     den = 2
     return num / den
 end
@@ -563,49 +565,19 @@ end
 function associated_chord_cm_pitch(
     a :: HarmonicULLT,
     y :: Real)
-#=
-    # Notes 6 pg 55
-    @assert(abs(y) <= a.wing.semispan)
-    @assert(a.angular_fq > 0)
-    semichord = a.wing.chord_fn(y) / 2
-    omega = a.angular_fq
-    k = omega * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
-    Ck = theodorsen_fn(k)
-    t1 = pi * a.free_stream_vel / 2
-    t21 = semichord / 2
-    t22 = im * omega * semichord^2 / (8 * a.free_stream_vel)
-    t23 = im * a.free_stream_vel / omega
-    t24 = -Ck * (semichord/2 + im * a.free_stream_vel / omega)
-    t25 = -im / omega
-    t2 = t21 + t22 + t23 + t24 + t25
-    t = t1 * t2
-    return t
-    =#
-    #=
-    # Notes 6 pg 71
+    #Notes #7 pg. 4
     @assert(abs(y) <= a.wing.semispan)
     @assert(a.angular_fq > 0)
     chord = a.wing.chord_fn(y)
+    semichord = chord/2
     omega = a.angular_fq
-    k = omega * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    U = a.free_stream_vel
+    k = omega * a.wing.chord_fn(y) / (2 * U)
     Ck = theodorsen_fn(k)
-    t1 = pi * a.free_stream_vel
-    t21 = 1/8
-    t22 = omega * chord^2 * im / 64
-    t23 = -Ck * (chord/8 + a.free_stream_vel * im  / (2 * omega))
-    t2 = t21 + t22 + t23
-    t = t1 * t2
-    return -t=#
-    @assert(abs(y) <= a.wing.semispan)
-    @assert(a.angular_fq > 0)
-    chord = a.wing.chord_fn(y)
-    omega = a.angular_fq
-    k = omega * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
-    Ck = theodorsen_fn(k)
-    t1 = - pi * im / (2 * chord)
-    t21 = - im
-    t22 = k / 4
-    t23 = (im + 2 / k) * Ck
+    t1 = -pi / 4
+    t21 = im * k * semichord/ 4
+    t22 = Ck * (2 * im * U / omega - semichord)
+    t23 = semichord
     t2 = t21 + t22 + t23
     t = t1 * t2
     return t
