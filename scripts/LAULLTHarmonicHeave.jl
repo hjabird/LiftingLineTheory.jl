@@ -7,7 +7,7 @@ using LiftingLineTheory
 using PyPlot
 
 let
-    AR = 8
+    AR = 4
     wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
     srf = 8
     k = srf / AR
