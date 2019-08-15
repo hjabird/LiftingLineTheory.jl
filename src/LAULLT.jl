@@ -159,8 +159,6 @@ function outer_2D_induced_downwash(a::LAULLT)
         for j = 1:size(opos)[1]
             opos[j, :] += translations[i, :]
         end
-        #println(opos)
-        #println(a.inner_sols[i].te_particles.vorts)
         dw[i, :] = particle_induced_velocity(opos, 
             a.inner_sols[i].te_particles.vorts, [0., 0.], kernel, 0.0)
     end
@@ -290,29 +288,6 @@ function apply_downwash_to_inner_solution!(a::LAULLT, downwashes::Matrix{<:Real}
     return
 end
 
-function to_vtk(a::LAULLT, filename::String)
-    wake = a.wake_discretisation
-    if prod(size(wake.vertices))!= 0
-        fstarts, fends, fstrs = to_filaments(wake)
-        nfils = size(fstarts)[1]
-        points = vcat(fstarts, fends)
-        cells = Vector{WriteVTK.MeshCell}(undef, nfils)        
-        celldata = fstrs
-        for i = 1 : nfils
-            cells[i] = WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_LINE, 
-                [i, i+nfils])
-        end
-    else
-        points = zeros(0, 3)
-        cells = Vector{WriteVTK.MeshCell}(undef, 0)
-        cell_str = zeros(0)
-    end
-    vtkfile = WriteVTK.vtk_grid(filename, points', cells)
-    WriteVTK.vtk_cell_data(vtkfile, celldata, "Vorticity")
-    WriteVTK.vtk_save(vtkfile)
-    return
-end
-
 # Returns local C_l * chord and C_d * chord as spline.
 function lift_and_drag_coefficient_splines(a::LAULLT)
     semispan = a.wing_planform.semispan
@@ -352,6 +327,29 @@ function lift_and_drag_coefficients(a::LAULLT)
     liftc = sum(weights .* ls.(points) .* chords) / warea
     dragc = sum(weights .* ds.(points) .* chords) / warea
     return liftc, dragc
+end
+
+function to_vtk(a::LAULLT, filename::String)
+    wake = a.wake_discretisation
+    if prod(size(wake.vertices))!= 0
+        fstarts, fends, fstrs = to_filaments(wake)
+        nfils = size(fstarts)[1]
+        points = vcat(fstarts, fends)
+        cells = Vector{WriteVTK.MeshCell}(undef, nfils)        
+        celldata = fstrs
+        for i = 1 : nfils
+            cells[i] = WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_LINE, 
+                [i, i+nfils])
+        end
+    else
+        points = zeros(0, 3)
+        cells = Vector{WriteVTK.MeshCell}(undef, 0)
+        cell_str = zeros(0)
+    end
+    vtkfile = WriteVTK.vtk_grid(filename, points', cells)
+    WriteVTK.vtk_cell_data(vtkfile, celldata, "Vorticity")
+    WriteVTK.vtk_save(vtkfile)
+    return
 end
 
 function csv_titles(a::LAULLT)

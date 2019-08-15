@@ -29,9 +29,11 @@ let
 
         theod_amp = -2*pi*(theodorsen_fn(ks[i]) + im * ks[i] / 2) *
             im * omega * amp
-        plot(rows[50:end, 1], rows[50:end, 9] ./ abs(theod_amp))
+        plot(rows[50:end, 1], rows[50:end, 10] ./ abs(theod_amp), label="k="*string(ks[i]))
+        println(hdr[1,10])
     end
     xlabel("Time")
     ylabel("C_L normalised with theodorsen CL")
-    return
+    legend()
+    return 
 end

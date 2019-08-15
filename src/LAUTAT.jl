@@ -1,5 +1,3 @@
-using PyPlot
-
 mutable struct ThinFoilGeometry
     semichord :: Real
     camber_line :: Function # In [-1, 1]
@@ -60,6 +58,25 @@ mutable struct ParticleGroup2D
     end
 end
 
+"""
+Large amplitude unsteady lifting line theory.
+
+
+# Initialisation
+Requires optional arguments only:
+
+* `U` - vector::<:Real length 2. Free stream vel.
+* `external_perturbation` - function of (x,t) where x is matrix[N, 2], t::Real. Defaults to zeros(size(x)[1],2)
+* `foil` - thin aerofoil geometry. Default flat plate, chord = 1
+* `kinematics` - RigidKinematics2D. Defaults to unit velocity heave in y dir. (ie. RigidKinematics2D(x->x, x->0, 0.))
+* `te_particles` - particle group 2D. Default is empty flow field
+* `regularisation` - CVortex.RegularisationFunction.
+* `num_fourier_terms` - Int. Initialises to 8
+* `reg_dist` - regularisation distance for regularised vortex particles.
+* `current_time` - Float representing time.
+* `dt` - Forward Euler time step.
+
+"""
 mutable struct LAUTAT
     U :: Vector{Real} # Free stream velocity
     external_perturbation :: Function #f(x::Matrix{Real}, t::Real) where x
@@ -101,7 +118,7 @@ end
 
 function advance_one_step(a::LAUTAT)
     if(length(a.current_fourier_terms)==0)
-        fill_downwash_cache!(a, 50)
+        fill_downwash_cache!(a, 64)
         tmptime = a.current_time
         a.current_time -= a.dt
         a.current_fourier_terms = compute_fourier_terms(a)
@@ -255,7 +272,7 @@ function vel_normal_to_foil_surface(a::LAUTAT)
     alpha = a.kinematics.AoA(a.current_time)
     alpha_dot = a.kinematics.dAoAdt(a.current_time)
     dzdt = a.kinematics.dzdt(a.current_time)
-    slopes= map(a.foil.camber_slope, mes_pnts)
+    slopes = map(a.foil.camber_slope, mes_pnts)
     rot = [cos(alpha) -sin(alpha); sin(alpha) cos(alpha)]
     for i = 1 : length(mes_pnts)
         field_vels[i, :] = rot * (field_vels[i, :] + ext_vels)
