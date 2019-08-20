@@ -99,7 +99,7 @@ end
 function theta_to_y(
     a :: HarmonicULLT,
     theta :: Real)
-
+    # Yes
     @assert(0 <= theta <= pi)
     return a.wing.semispan * cos(theta)
 end
@@ -107,9 +107,9 @@ end
 function dtheta_dy(
     a :: HarmonicULLT,
     y :: Real)
-    
+    # Yes
     @assert(abs(y) <= a.wing.semispan)
-    result = -1 / sqrt(pow(a.wing.semispan, 2) - y^2)
+    result = -1 / sqrt(a.wing.semispan^2 - y^2)
     return result
 end
 
@@ -117,7 +117,7 @@ function dsintheta_dy(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
-    
+    # Yes
     @assert(k >= 0, "Positive wavenumbers only please!")
     theta = y_to_theta(a, y)
     dtdy = dtheta_dy(y)
@@ -129,7 +129,7 @@ function dsintheta_dtheta(
     a :: HarmonicULLT,
     theta :: Real,
     k :: Integer)
-    
+    # Yes
     @assert(k >= 0, "Positive wavenumbers only please!")
     @assert(0 <= theta <= pi)
     dGamma_dt = (2 * k + 1) * cos((2 * k + 1) * theta)
@@ -139,7 +139,7 @@ end
 function y_to_theta(
     a :: HarmonicULLT,
     y :: Real)
-
+    # Yes
     @assert(abs(y) <= a.wing.semispan)
     return acos(y / a.wing.semispan)
 end
@@ -183,9 +183,10 @@ end
 function p_eq(
     a :: HarmonicULLT,
     delta_y :: Real)
-
+    # Is correct. See notes #7 pg.6 or #1 pg.63 or #1 pg. 76.
+    # Eq. 3.21 in Sclavounos1987.
     function integrand1(t :: T) where T <: Real
-        val = - delta_y * exp(-delta_y * t) * (asin(1 / t) + sqrt(t^2 -1) -t)
+        val = - delta_y * exp(-delta_y * t) * (asin(1 / t) + sqrt(t^2 - 1) - t)
         return val / exp(-(t-1))    # Because of the quadrature
     end
     function integrand2(t :: T) where T <: Real
