@@ -173,7 +173,8 @@ function k_term3(
     a :: HarmonicULLT,
     delta_y :: Real)
 
-    coeff = - sign(delta_y) / 2
+    coeff = - sign(delta_y) / 2         # IS THIS - sign correct?? Why did I put it here originally?
+    #coeff = sign(delta_y) / 2
     nu = a.angular_fq / a.free_stream_vel
     p = nu * p_eq(a, nu * abs(delta_y))
 
@@ -274,24 +275,22 @@ function integrate_gammaprime_k_term2(
     @assert(k >= 0)
     theta_singular = y_to_theta(a, y)
     v = a.angular_fq / a.free_stream_vel
+    s = a.wing.semispan
     
     integral_coefficient = im * v / 2
     function nonsingular_integrand(theta_0)
-        return (2*k+1) * cos((2*k+1)*theta_0) / (v * a.wing.semispan * sin(theta_0))
+        return (2*k+1) * cos((2*k+1)*theta_0) / (v * s * sin(theta_0))
     end
     function singular_integrand(theta_0)
-        return v * a.wing.semispan * sin(theta_0) * sign(theta_0 - theta_singular) * 
-            expint(v * a.wing.semispan * abs(cos(theta_singular) - cos(theta_0)))
+        return v * s * sin(theta_0) * #sign(theta_0 - theta_singular) * 
+            expint(v * s * abs(cos(theta_singular) - cos(theta_0)))
     end
     
     # The singular part (in terms of the singularity subtraction method) of the integral
-    singular_integral = v * a.wing.semispan * (
-        (cos(theta_singular) + 1) * 
-            expint(v * a.wing.semispan * (cos(theta_singular) + 1)) +
-        (cos(theta_singular) - 1) * 
-            expint(v * a.wing.semispan * (1 - cos(theta_singular)))) +
-        exp( v * a.wing.semispan * (cos(theta_singular) - 1)) -
-        exp(-v * a.wing.semispan * (cos(theta_singular) + 1))
+    singular_integral = v * (y + s) * expint(v * (y + s)) -
+                        v * (y - s) * expint(v * (s - y)) +
+                        exp(-v * (y + s)) -
+                        exp(-v * (s - y))
         
     ssm_variable = nonsingular_integrand(theta_singular)
     function numerical_integrand(theta_0)
