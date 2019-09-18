@@ -105,6 +105,7 @@ mutable struct LAUTAT
         regularisation=winckelmans_regularisation(), reg_dist=-99.234,
         num_fourier_terms=8, current_fourier_terms=[], last_fourier_terms=[],
         current_time=0.0, dt=0.025)
+        @assert(length(U)==2, "U should be a 2D vector.")
 		if reg_dist==-99.234
 			reg_dist=sqrt(U[1]^2 + U[2]^2) * dt
 		end
