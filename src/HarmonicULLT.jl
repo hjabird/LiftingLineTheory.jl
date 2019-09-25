@@ -213,9 +213,9 @@ function integrate_gammaprime_k(
     @assert( abs(y) <= a.wing.semispan )
     
     if( a.downwash_model == unsteady )
-        i1 = integrate_gammaprime_k_term1(a, y, k)
-        i2 = -integrate_gammaprime_k_term2(a, y, k)
-        i3 = -integrate_gammaprime_k_term3(a, y, k)
+        i1 = integrate_gammaprime_k_term1(a, y, k)  # Don't touch
+        i2 = integrate_gammaprime_k_term2(a, y, k)
+        i3 = integrate_gammaprime_k_term3(a, y, k)  # Don't touch - correct.
         integral = i1 + i2 + i3
     elseif( a.downwash_model == psuedosteady )
         integral = integrate_gammaprime_k_psuedosteady(a, y, k)
@@ -231,6 +231,7 @@ function integrate_gammaprime_k_term1(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
+    # Pretty sure this is right.
     # Yes
     theta_singular = y_to_theta(a, y)
     
@@ -244,8 +245,8 @@ function integrate_gammaprime_k_term1(
         nonsingular_K = k_term1_numerator(a, y - eta)
         gamma_dtheta = dsintheta_dtheta(a, theta_0, k)
         
-        singular_subtraction = nonsingular_K  * gamma_dtheta - 
-                                                    singularity_coefficient
+        singular_subtraction = (nonsingular_K  * gamma_dtheta - 
+                                                    singularity_coefficient)
         return singular_part * singular_subtraction
     end
     
@@ -284,9 +285,9 @@ function integrate_gammaprime_k_term2(
     end
     
     # The singular part (in terms of the singularity subtraction method) of the integral
-    singular_integral = v * (y + s) * expint(v * (y + s)) -
-                        v * (y - s) * expint(v * (s - y)) +
-                        exp(-v * (y + s)) -
+    singular_integral = v * (y + s) * expint(v * (y + s)) +
+                        v * (y - s) * expint(v * (s - y)) -
+                        exp(-v * (y + s)) +
                         exp(-v * (s - y))
         
     ssm_variable = nonsingular_integrand(theta_singular)
@@ -316,7 +317,7 @@ function integrate_gammaprime_k_term3(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
-        
+    # Don't touch - correct.
     theta_singular = y_to_theta(a, y)
     function integrand(theta_0)
         eta = theta_to_y(a, theta_0)
