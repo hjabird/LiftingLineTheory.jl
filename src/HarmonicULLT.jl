@@ -147,7 +147,7 @@ end
 function k_term1_singularity(
     a :: HarmonicULLT,
     delta_y :: Real) 
-
+    # Yes
     @assert(delta_y != 0, "delta_y == 0 leads to NaN (inf) answer")
     return 1 / delta_y
 end
@@ -155,25 +155,25 @@ end
 function k_term1_numerator(
     a :: HarmonicULLT,
     delta_y :: Real)
-
+    # Yes
     return exp(- (a.angular_fq / a.free_stream_vel) * abs(delta_y)) / 2
 end
 
 function k_term2(
     a :: HarmonicULLT,
     delta_y :: Real)
-
+    # Yes
     coeff = sign(delta_y) / 2
     nu = a.angular_fq / a.free_stream_vel
     e1_term = - im * nu * expint(nu * abs(delta_y))
-    return coeff * -1 * e1_term
+    return coeff * e1_term
 end
 
 function k_term3(
     a :: HarmonicULLT,
     delta_y :: Real)
-
-    coeff = - sign(delta_y) / 2
+    # Yes
+    coeff = sign(delta_y) / 2
     nu = a.angular_fq / a.free_stream_vel
     p = nu * p_eq(a, nu * abs(delta_y))
 
@@ -214,8 +214,8 @@ function integrate_gammaprime_k(
     
     if( a.downwash_model == unsteady )
         i1 = integrate_gammaprime_k_term1(a, y, k)
-        i2 = integrate_gammaprime_k_term2(a, y, k)
-        i3 = integrate_gammaprime_k_term3(a, y, k)
+        i2 = -integrate_gammaprime_k_term2(a, y, k)
+        i3 = -integrate_gammaprime_k_term3(a, y, k)
         integral = i1 + i2 + i3
     elseif( a.downwash_model == psuedosteady )
         integral = integrate_gammaprime_k_psuedosteady(a, y, k)
@@ -231,7 +231,7 @@ function integrate_gammaprime_k_term1(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
-    
+    # Yes
     theta_singular = y_to_theta(a, y)
     
     # We're using the singularity subtraction method to deal with a CPV problem.
@@ -260,8 +260,6 @@ function integrate_gammaprime_k_term1(
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) +
         singularity_coefficient * 0. # Glauert integral
-
-
     return -integral
 end
 
@@ -337,7 +335,7 @@ function integrate_gammaprime_k_term3(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    return integral
+    return -integral
 end
 
 function integrate_gammaprime_k_psuedosteady(
