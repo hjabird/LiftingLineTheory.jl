@@ -213,8 +213,8 @@ function integrate_gammaprime_k(
     @assert( abs(y) <= a.wing.semispan )
     
     if( a.downwash_model == unsteady )
-        i1 = integrate_gammaprime_k_term1(a, y, k)  # Don't touch
-        i2 = integrate_gammaprime_k_term2(a, y, k)
+        i1 = integrate_gammaprime_k_term1(a, y, k)  # Don't touch - correct.
+        i2 = integrate_gammaprime_k_term2(a, y, k)  # Don't touch - correct.
         i3 = integrate_gammaprime_k_term3(a, y, k)  # Don't touch - correct.
         integral = i1 + i2 + i3
     elseif( a.downwash_model == psuedosteady )
@@ -317,6 +317,10 @@ function integrate_gammaprime_k_term3(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
+    
+    @assert(k >= 0)
+    @assert(abs(y) < a.wing.semispan)
+
     # Don't touch - correct.
     theta_singular = y_to_theta(a, y)
     function integrand(theta_0)
