@@ -147,7 +147,7 @@ end
 function k_term1_singularity(
     a :: HarmonicULLT,
     delta_y :: Real) 
-
+    # Yes
     @assert(delta_y != 0, "delta_y == 0 leads to NaN (inf) answer")
     return 1 / delta_y
 end
@@ -155,26 +155,25 @@ end
 function k_term1_numerator(
     a :: HarmonicULLT,
     delta_y :: Real)
-
+    # Yes
     return exp(- (a.angular_fq / a.free_stream_vel) * abs(delta_y)) / 2
 end
 
 function k_term2(
     a :: HarmonicULLT,
     delta_y :: Real)
-
+    # Yes
     coeff = sign(delta_y) / 2
     nu = a.angular_fq / a.free_stream_vel
     e1_term = - im * nu * expint(nu * abs(delta_y))
-    return coeff * -1 * e1_term
+    return coeff * e1_term
 end
 
 function k_term3(
     a :: HarmonicULLT,
     delta_y :: Real)
-
-    coeff = - sign(delta_y) / 2         # IS THIS - sign correct?? Why did I put it here originally?
-    #coeff = sign(delta_y) / 2
+    # Yes
+    coeff = sign(delta_y) / 2
     nu = a.angular_fq / a.free_stream_vel
     p = nu * p_eq(a, nu * abs(delta_y))
 
@@ -214,9 +213,9 @@ function integrate_gammaprime_k(
     @assert( abs(y) <= a.wing.semispan )
     
     if( a.downwash_model == unsteady )
-        i1 = integrate_gammaprime_k_term1(a, y, k)
+        i1 = integrate_gammaprime_k_term1(a, y, k)  # Don't touch
         i2 = integrate_gammaprime_k_term2(a, y, k)
-        i3 = integrate_gammaprime_k_term3(a, y, k)
+        i3 = integrate_gammaprime_k_term3(a, y, k)  # Don't touch - correct.
         integral = i1 + i2 + i3
     elseif( a.downwash_model == psuedosteady )
         integral = integrate_gammaprime_k_psuedosteady(a, y, k)
@@ -232,7 +231,8 @@ function integrate_gammaprime_k_term1(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
-    
+    # Pretty sure this is right.
+    # Yes
     theta_singular = y_to_theta(a, y)
     
     # We're using the singularity subtraction method to deal with a CPV problem.
@@ -245,8 +245,8 @@ function integrate_gammaprime_k_term1(
         nonsingular_K = k_term1_numerator(a, y - eta)
         gamma_dtheta = dsintheta_dtheta(a, theta_0, k)
         
-        singular_subtraction = nonsingular_K  * gamma_dtheta - 
-                                                    singularity_coefficient
+        singular_subtraction = (nonsingular_K  * gamma_dtheta - 
+                                                    singularity_coefficient)
         return singular_part * singular_subtraction
     end
     
@@ -261,8 +261,6 @@ function integrate_gammaprime_k_term1(
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) +
         singularity_coefficient * 0. # Glauert integral
-
-
     return -integral
 end
 
@@ -287,9 +285,9 @@ function integrate_gammaprime_k_term2(
     end
     
     # The singular part (in terms of the singularity subtraction method) of the integral
-    singular_integral = v * (y + s) * expint(v * (y + s)) -
-                        v * (y - s) * expint(v * (s - y)) +
-                        exp(-v * (y + s)) -
+    singular_integral = v * (y + s) * expint(v * (y + s)) +
+                        v * (y - s) * expint(v * (s - y)) -
+                        exp(-v * (y + s)) +
                         exp(-v * (s - y))
         
     ssm_variable = nonsingular_integrand(theta_singular)
@@ -319,7 +317,7 @@ function integrate_gammaprime_k_term3(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
-        
+    # Don't touch - correct.
     theta_singular = y_to_theta(a, y)
     function integrand(theta_0)
         eta = theta_to_y(a, theta_0)
@@ -336,7 +334,7 @@ function integrate_gammaprime_k_term3(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    return integral
+    return -integral
 end
 
 function integrate_gammaprime_k_psuedosteady(
