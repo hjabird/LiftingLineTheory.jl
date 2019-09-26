@@ -280,7 +280,7 @@ function integrate_gammaprime_k_term2(
         return (2*k+1) * cos((2*k+1)*theta_0) / (v * s * sin(theta_0))
     end
     function singular_integrand(theta_0)
-        return v * s * sin(theta_0) * #sign(theta_0 - theta_singular) * 
+        return v * s * sin(theta_0) *
             expint(v * s * abs(cos(theta_singular) - cos(theta_0)))
     end
     
@@ -309,7 +309,7 @@ function integrate_gammaprime_k_term2(
     
     int_lower = sum(last.(pts1) .* map(numerical_integrand, first.(pts1)))
     int_upper = sum(last.(pts2) .* map(numerical_integrand, first.(pts2)))
-    complete_integral = integral_coefficient * (int_lower + int_upper + ssm_variable * singular_integral)
+    complete_integral = integral_coefficient * (int_upper - int_lower + ssm_variable * singular_integral)
     return complete_integral
 end
 
