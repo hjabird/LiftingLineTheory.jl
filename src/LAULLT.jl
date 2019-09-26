@@ -329,6 +329,26 @@ function lift_and_drag_coefficients(a::LAULLT)
     return liftc, dragc
 end
 
+function lift_coefficient(a::LAULLT, y::Real)
+    liftc, ~ = lift_and_drag_coefficients(a, y)
+    return liftc
+end
+
+function lift_coefficient(a::LAULLT)
+    liftc, ~ = lift_and_drag_coefficients(a)
+    return liftc
+end
+
+function drag_coefficient(a::LAULLT, y::Real)
+    ~, dragc = lift_and_drag_coefficients(a, y)
+    return dragc
+end
+
+function drag_coefficient(a::LAULLT)
+    ~, dragc = lift_and_drag_coefficients(a)
+    return dragc
+end
+
 function to_vtk(a::LAULLT, filename::String)
     wake = a.wake_discretisation
     if prod(size(wake.vertices))!= 0
