@@ -204,6 +204,31 @@ function p_eq(
     return term1 + im * term2
 end
 
+#= DIRECT EVLN of integral with Guass-Laguerre
+function p_eq(
+    a :: HarmonicULLT,
+    delta_y :: Real)
+    # Is correct. See notes #7 pg.6 or #1 pg.63 or #1 pg. 76.
+    # Eq. 3.21 in Sclavounos1987.
+    function integrand1(t :: T) where T <: Real
+        val = exp(-delta_y * t) * (sqrt(t^2 - 1) - t)/t
+        return val / exp(-(t-1))    # Because of the quadrature
+    end
+    function integrand2(t :: T) where T <: Real
+        return exp(-delta_y * t) * (sqrt(1 - t^2) - 1) / t
+    end
+
+    points1, weights1 = FastGaussQuadrature.gausslaguerre(40) # laGUERRE
+    points2, weights2 = FastGaussQuadrature.gausslegendre(20) # leGENDRE
+    pts2 = map(
+        x->linear_remap(x[1], x[2], -1, 1, 0, 1),
+        zip(points2, weights2))
+    term1 = sum(weights1 .* map(integrand1, points1 .+ 1))
+    term2 = sum(last.(pts2) .* map(integrand2, first.(pts2)))
+    return term1 + im * term2
+end
+=#
+
 function integrate_gammaprime_k(
     a :: HarmonicULLT,
     y :: Real,
