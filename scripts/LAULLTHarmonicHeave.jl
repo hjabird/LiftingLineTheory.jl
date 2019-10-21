@@ -7,14 +7,14 @@ using LiftingLineTheory
 using PyPlot
 
 let
-    AR = 4
+    AR = 3
     wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
-    srf = 8
+    srf = 3
     k = srf / AR
     amp = 0.01
     omega = 2 * k
     dt = 0.015
-    nsteps = 500
+    nsteps = 300
 
 	
 	println("Comparing LAULLT with Sclavounos in heave.")
@@ -71,6 +71,15 @@ let
     println("\n")
     plot(rows2d[50:end, 1], rows2d[50:end, 9], label="LAUTAT")
 
+    
+    probs = HarmonicULLT(omega, wing; downwash_model=streamwise_filaments)
+    compute_collocation_points!(probs)
+    compute_fourier_terms!(probs)
+    cls = lift_coefficient(probs) * im * omega * amp
+    ts = collect(0:dt:dt*nsteps)
+    clst = real.(cls .* exp.(im * omega * ts))
+    plot(ts, clst, label="Streamwise filaments ULLT")
+
     xlabel("Time")
     ylabel("C_L")
     legend()
@@ -83,5 +92,6 @@ let
     plot(rows[50:end, 1], rows[50:end, 8+4*7], label="LAULLT A1 8")
     plot(rows2d[50:end, 1], rows2d[50:end, 8], label="LAUTAT A1")
     legend()
+
     return prob, rows, hdr
 end

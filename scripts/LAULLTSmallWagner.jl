@@ -8,17 +8,17 @@ using PyPlot
 let
     AR = 8
     wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
-    amp = deg2rad(20)
+    amp = deg2rad(2)
     dt = 0.015
-    nsteps = 500
+    nsteps = 10
 
 	
-	println("Comparing LAULLT with Sclavounos in heave.")
+	println("Comparing LAULLT to Wagner.")
 	println("AR = ", AR)
 	println("dt = ", dt)
     println("amp = ", amp)
     
-    ninner = 32
+    ninner = 8
     bigsegs= range(-1, 1, length=ninner+1)
     innersolpos = collect((bigsegs[2:end]+bigsegs[1:end-1])./2)
     segs = collect(range(-1, 1, length=1*ninner+1))
