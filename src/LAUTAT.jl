@@ -107,7 +107,7 @@ mutable struct LAUTAT
         current_time=0.0, dt=0.025)
         @assert(length(U)==2, "U should be a 2D vector.")
 		if reg_dist==-99.234
-			reg_dist=sqrt(U[1]^2 + U[2]^2) * dt
+			reg_dist=sqrt(U[1]^2 + U[2]^2) * dt * 1.5
 		end
 		@assert(reg_dist >= 0)		
         return new(U, external_perturbation, kinematics, foil, te_particles, 
@@ -119,13 +119,7 @@ end
 
 function advance_one_step(a::LAUTAT)
     if(length(a.current_fourier_terms)==0)
-        fill_downwash_cache!(a, 64)
-        tmptime = a.current_time
-        a.current_time -= a.dt
-        a.current_fourier_terms = compute_fourier_terms(a)
-        a.last_fourier_terms = a.current_fourier_terms
-        a.current_time = tmptime
-        invalidate_downwash_cache!(a)
+        initialise!(a)
     end        
     wake_vels = te_wake_particle_velocities(a::LAUTAT)
     a.te_particles.positions += wake_vels .* a.dt
@@ -183,7 +177,7 @@ function invalidate_downwash_cache!(a::LAUTAT)
     return
 end
 
-function initialise(a::LAUTAT)
+function initialise!(a::LAUTAT)
     tmptime = a.current_time
     a.current_time -= a.dt
     fill_downwash_cache!(a, 64)
