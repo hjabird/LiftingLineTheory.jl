@@ -58,7 +58,7 @@ mutable struct LAULLT
             "Regularisation distance must be positive.")
 
         semispan = wing_planform.semispan
-        semichord = map(wing_planform.chord_fn, semispan .* 
+        semichord = map(x->wing_planform.chord_fn(x)/2, semispan .* 
             inner_solution_positions)
         if isnan(reg_dist)
             reg_dist = dt * 1.5 * sqrt(U[1]^2 + U[2]^2)
@@ -86,7 +86,7 @@ mutable struct LAULLT
                 current_time=current_time, dt=dt),
             1:length(semichord))
         for i = 1 : length(inner_probs)
-            initialise(inner_probs[i])
+            initialise!(inner_probs[i])
         end
         return new(inner_probs, inner_solution_positions, wing_planform, nothing,
             segmentation)
@@ -160,7 +160,7 @@ function outer_2D_induced_downwash(a::LAULLT)
             opos[j, :] += translations[i, :]
         end
         dw[i, :] = particle_induced_velocity(opos, 
-            a.inner_sols[i].te_particles.vorts, [0., 0.], kernel, 0.0)
+           a.inner_sols[i].te_particles.vorts, [0., 0.], kernel, 0.0)
     end
     return dw
 end
@@ -309,12 +309,13 @@ function lift_and_drag_coefficient_splines(a::LAULLT)
     return ls, ds
 end
 
+# 2D C_l at a spanwise position (normalised wrt/ chord)
 function lift_and_drag_coefficients(a::LAULLT, y::Real)
-    semispan = a.wing.semispan
+    semispan = a.wing_planform.semispan
     @assert(-semispan <= y <= semispan)
     ls, ds =  lift_and_drag_coefficient_splines(a)
     c = chord(a.wing_planform, y)
-    return ls(y) * c, ds(y) * c
+    return ls(y) / c, ds(y) / c
 end
 
 function lift_and_drag_coefficients(a::LAULLT)
@@ -324,8 +325,8 @@ function lift_and_drag_coefficients(a::LAULLT)
     points, weights = FastGaussQuadrature.gausslegendre(50)
     points, weights = linear_remap(points, weights, -1, 1, -semispan, semispan)
     chords = map(x->chord(a.wing_planform, x), points)
-    liftc = sum(weights .* ls.(points) .* chords) / warea
-    dragc = sum(weights .* ds.(points) .* chords) / warea
+    liftc = sum(weights .* ls.(points)) / warea
+    dragc = sum(weights .* ds.(points)) / warea
     return liftc, dragc
 end
 
