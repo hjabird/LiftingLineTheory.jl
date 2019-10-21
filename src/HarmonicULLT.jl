@@ -289,6 +289,7 @@ function integrate_gammaprime_k_term1(
     return -integral
 end
 
+#= ORIGINAL: using expint singularity =#
 function integrate_gammaprime_k_term2(
     a :: HarmonicULLT,
     y :: Real,
@@ -337,6 +338,58 @@ function integrate_gammaprime_k_term2(
     complete_integral = integral_coefficient * (int_upper - int_lower + ssm_variable * singular_integral)
     return complete_integral
 end
+
+#= Extracting the logarithmic singularity from expint
+function integrate_gammaprime_k_term2(
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
+    
+    @assert(abs(y) < a.wing.semispan)
+    @assert(k >= 0)
+    theta_singular = y_to_theta(a, y)
+    v = a.angular_fq / a.free_stream_vel
+    s = a.wing.semispan
+    
+    integral_multiplier = im * v * (2*k + 1) / 2
+    function integral_1(ts)
+        eta = s * cos(ts)
+        return sign(y - eta) * cos((2 * k + 1) * ts) *
+            (expint(v * abs(y-eta)) + log(v * abs(y-eta)))
+    end
+    function integral_2_sing(ts)
+        eta = s * cos(ts)
+        return v * s * sin(ts) * log(v * abs(y - eta))
+    end
+    function integral_2_nsing(ts)
+        eta = s * cos(ts)
+        return sign(y - eta) * cos((2*k + 1) * ts) / (v * s * sin(ts))
+    end
+    singularity_mult = integral_2_nsing(acos(y/s))
+    function integral_2_sing_sub(ts)
+        return integral_2_sing(ts) * (integral_2_nsing(ts) - singularity_mult)
+    end
+    singularity_integral =  v * (y + s) * log( v * (y + s)) -
+                            v * (y - s) * log(-v * (y - s)) -
+                            v * (y + s) +
+                            v * (y - s)
+
+    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)
+    pts2 = map(
+        x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),
+        zip(nodes1, weights1))
+    pts1 = map(
+        x->linear_remap(x[1], x[2], -1, 1, 0, theta_singular),
+        zip(nodes1, weights1))
+    
+    int1_lower = sum(last.(pts1) .* map(integral_1, first.(pts1)))
+    int1_upper = sum(last.(pts2) .* map(integral_1, first.(pts2)))
+    int2_lower = sum(last.(pts1) .* map(integral_2_sing_sub, first.(pts1)))
+    int2_upper = sum(last.(pts2) .* map(integral_2_sing_sub, first.(pts2)))
+    complete_integral = integral_multiplier * (int1_upper + int1_lower - 
+                    int2_upper - int2_lower - singularity_mult * singularity_integral)
+    return complete_integral
+end=#
 
 function integrate_gammaprime_k_term3(
     a :: HarmonicULLT,
@@ -431,7 +484,7 @@ function gamma_terms_matrix(
     idxs = collect(1:a.num_terms)
     mtrx = map(
         i->sin((2 * i[2] - 1) * a.collocation_points[i[1]]),
-        collect((i,j) for i in idxs, j in idxs)
+        collect((j,k) for j in idxs, k in idxs)
     )
     return mtrx
 end
@@ -465,6 +518,8 @@ end
 function compute_fourier_terms!(
     a :: HarmonicULLT )
 
+    @assert(length(a.collocation_points)>1, "Only one collocation point. "*
+        "Did you call compute_collocation_points!(a::HarmonicULLT)?")
     gamma_mtrx = gamma_terms_matrix(a)
     integro_diff_mtrx = 
         map(
@@ -608,6 +663,86 @@ function associated_chord_cm_pitch(
     t2 = t21 + t22 + t23
     t = t1 * t2
     return t
+end
+
+function drag_coefficient(
+    a :: HarmonicULLT)
+
+    @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
+        "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
+
+    w_area = area(a.wing)
+    integrand = y->drag_coefficient(a, y) * 
+        a.amplitude_fn(y) * a.wing.chord_fn(y)
+    nodes, weights = FastGaussQuadrature.gausslegendre(70)
+    pts = map(
+        x->linear_remap(x[1], x[2], -1, 1, -a.wing.semispan, a.wing.semispan),
+        zip(nodes, weights))
+    integral = sum(last.(pts) .* map(integrand, first.(pts)))/ w_area
+    CD = integral
+    return CD
+end
+
+function drag_coefficient(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
+    # Based on Ramesh 2013
+    cs = 2 * pi * a0_term(a, y)^2
+    cd = -cs
+    if a.pitch_plunge == 5
+        cdp = lift_coefficient(a, y) * a.amplitude_fn(y)
+        cd += cdp
+    end
+    return cd / a.amplitude_fn(y)
+end
+
+function a0_term(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
+
+    if(a.pitch_plunge == 3)
+        associated_a0_fn = associated_a0_term_heave
+    elseif(a.pitch_plunge == 5)
+        associated_a0_fn = associated_a0_term_pitch
+    end
+    a0_term = a.amplitude_fn(y) * associated_a0_fn(a, y) - f_eq(a, y) *
+        associated_a0_term_heave(a, y)
+    return a0_term
+end
+
+function associated_a0_term_pitch(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    chord = a.wing.chord_fn(y)
+    semichord = chord/2
+    omega = a.angular_fq
+    U = a.free_stream_vel
+    k = omega * a.wing.chord_fn(y) / (2 * U)
+    Ck = theodorsen_fn(k)
+    t1 = Ck * (1 - im * omega * chord / (4 * U))
+    t2 = - im * omega * chord / (4 * U)
+    return t1 + t2
+end
+
+function associated_a0_term_heave(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    chord = a.wing.chord_fn(y)
+    semichord = chord/2
+    omega = a.angular_fq
+    U = a.free_stream_vel
+    k = omega * a.wing.chord_fn(y) / (2 * U)
+    Ck = theodorsen_fn(k)
+    t1 = - Ck * im * omega / U
+    return t1
 end
 
 function f_eq(
