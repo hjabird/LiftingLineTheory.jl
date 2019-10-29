@@ -71,7 +71,7 @@ function wagner_fn(s :: Real)
 end
 
 #= Mappings from Real->Real ------------------------------------------------=#
-function linear_remap(
+function linear_remap(  # Checked. GOOD.
     pointin :: Number,   weightin :: Number,
     old_a :: Number,     old_b :: Number,
     new_a :: Number,     new_b :: Number )
@@ -82,7 +82,7 @@ function linear_remap(
     return p_new, w_new
 end
 
-function linear_remap(
+function linear_remap(  # GOOD.
     pointin :: Vector{<:Number},   weightin :: Vector{<:Number},
     old_a :: Number,     old_b :: Number,
     new_a :: Number,     new_b :: Number )

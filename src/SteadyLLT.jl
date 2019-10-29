@@ -1,3 +1,12 @@
+#
+# SteadyULLT.jl
+#
+# Classical Prandtl ULLT right now. Might add curved/swept wing impl at some
+# point?
+#
+# Copyright HJA Bird 2019
+#
+#==============================================================================#
 
 mutable struct SteadyLLT
     wing :: StraightAnalyticWing
@@ -24,10 +33,10 @@ mutable struct SteadyLLT
             aoa_dist = y->aoa_distribution
         end
         @assert(isfinite(aoa_dist(0.0)), "aoa distribution is not finite!")
-        @assert(num_terms > 0, "Expecting a positive number of fourier"*
+        @assert(fourier_terms > 0, "Expecting a positive number of fourier"*
             " terms")
         return new(wing, free_stream_vel, aoa_dist, 
-            zeros(num_terms))
+            zeros(fourier_terms))
     end
 end
 
@@ -96,8 +105,8 @@ end
 
 function compute_fourier_terms!(a::SteadyLLT)
     col_points = compute_collocation_points(a)
-    alphas = map(theta->a.aoa_distribution(theta_to_y(theta)), col_points)
-    chords = map(theta->a.wing.chord(theta_to_y(theta)), col_points)
+    alphas = map(theta->a.aoa_distribution(theta_to_y(a, theta)), col_points)
+    chords = map(theta->a.wing.chord_fn(theta_to_y(a, theta)), col_points)
     nt = length(a.fourier_terms)
     @assert(nt > 0)
     
@@ -112,7 +121,7 @@ function compute_fourier_terms!(a::SteadyLLT)
     integro_mat = zeros(nt, nt)
     for i = 1:nt
         for j = 1:nt
-            integro_mat = (2 * j - 1) * pi * sin((2 * j - 1) * col_points[i]) /
+            integro_mat[i, j] = -(2 * j - 1) * sin((2 * j - 1) * col_points[i]) /
                 (4 * a.wing.semispan * a.U * sin(col_points[i]))
         end
     end
@@ -123,24 +132,45 @@ function compute_fourier_terms!(a::SteadyLLT)
 end
 
 function lift_coefficient(a::SteadyLLT, y::Real)
+    @assert(abs(y) <= a.wing.semispan, "abs(y) should be smaller than the wing semispan")
+    bv = bound_vorticity(a, y)
+    c = a.wing.chord_fn(y)
+    U = a.U
+    lift_coeff = bv / (0.5 * U * c)
+    return lift_coeff
 end
+
 function lift_coefficient(a::SteadyLLT)
+    s = a.wing.semispan
+    points, weights = FastGaussQuadrature.gausslegendre(40)
+    points, weights = linear_remap(points, weights, -1, 1, -s, s)
+    function integrand(y)
+        return lift_coefficient(a, y) * a.wing.chord_fn(y)
+    end
+    integral = sum(weights .* integrand.(points))
+    coeff = integral / area(a.wing)
+    return coeff
 end
+
 function drag_coefficient(a::SteadyLLT, y::Real)
+    @assert(false, "Not yet implemented")
 end
 function drag_coefficient(a::SteadyLLT)
+    @assert(false, "Not yet implemented")
 end
 function moment_coefficient(a::SteadyLLT, y::Real)
+    @assert(false, "Not yet implemented")
 end
 function moment_coefficient(a::SteadyLLT)
+    @assert(false, "Not yet implemented")
 end
 
 function bound_vorticity(a::SteadyLLT, y::Real)
     @assert(abs(y) <= a.wing.semispan)
-    theta = y_to_theta(y)
+    theta = y_to_theta(a, y)
     s = a.fourier_terms[1] * sin(theta)
     for i = 2 : length(a.fourier_terms)
-        s += a.fourier_terms[1] * sin( (2 * i - 1) * theta )
+        s += a.fourier_terms[i] * sin( (2 * i - 1) * theta )
     end
     return s
 end
