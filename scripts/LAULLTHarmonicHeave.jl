@@ -9,12 +9,12 @@ using PyPlot
 let
     AR = 3
     wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
-    srf = 3
+    srf = 3 * 0.4
     k = srf / AR
     amp = 0.01
     omega = 2 * k
-    dt = 0.015
-    nsteps = 300
+    dt = 0.025
+    nsteps = 2000
 
 	
 	println("Comparing LAULLT with Sclavounos in heave.")
@@ -79,6 +79,11 @@ let
     ts = collect(0:dt:dt*nsteps)
     clst = real.(cls .* exp.(im * omega * ts))
     plot(ts, clst, label="Streamwise filaments ULLT")
+    
+    cls = LiftingLineTheory.theodorsen_simple_cl(k, amp, 0)
+    ts = collect(0:dt:dt*nsteps)
+    clst = real.(cls .* exp.(im * omega * ts))
+    plot(ts, clst, label="Theodorsen")
 
     xlabel("Time")
     ylabel("C_L")
