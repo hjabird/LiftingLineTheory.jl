@@ -15,7 +15,6 @@ export
 	StraightAnalyticWing,
     DownwashModel,
 	HarmonicULLT,
-	HarmonicULLT2,
 	LAUTAT,
 	LAULLT,
 	RigidKinematics2D,
@@ -49,13 +48,20 @@ export
 	# Useful fuctions 
 	eldredge_ramp,
 	wagner_fn,
-	theodorsen_fn
+	theodorsen_fn,
+
+	# Generation of geometries
+	make_rectangular,
+	make_elliptic,
+	make_flat_plate
 	
 using CVortex
 import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature
 # source files
 include("DownwashEnum.jl")			# An enum. No deps.
 include("SpecialisedFunctions.jl")	# Wagner etc. + Exponential integral
+include("RigidKinematics2D.jl")		# Rigid 2D RigidKinematics2D
+include("ThinFoilGeometry.jl")		# Thin aerofoil representation
 include("Interpolators1D.jl")		# Cubic spline interpolation
 include("TheodorsenSimple.jl")		# Theodorsen + simple evaluation of Thoed.
 include("StraightAnalyticWing.jl")	# Define wing  planform shape

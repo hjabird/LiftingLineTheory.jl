@@ -1,3 +1,12 @@
+#
+# LAULLT.jl
+#
+# Large amplitude unsteady lifting line theory. A lifting line theory based
+# upon unsteady thin aerofoil theory.
+#
+# Copyright HJAB 2019
+#
+################################################################################
 
 """
 A vortex lattice with a "missing" edge when it is evaluated on i = 0.

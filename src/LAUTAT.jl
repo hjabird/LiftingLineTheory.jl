@@ -1,62 +1,11 @@
-mutable struct ThinFoilGeometry
-    semichord :: Real
-    camber_line :: Function # In [-1, 1]
-    camber_slope :: Function
-
-    function ThinFoilGeometry()
-        return new(0.5, x->0, x->0)
-    end
-    function ThinFoilGeometry(semichord::Real)
-        @assert(semichord>0, "Semichord must be positive")
-        return new(semichord, x->0, x->0)
-    end
-    function ThinFoilGeometry(semichord::Real, camber_func::Function)
-        @assert(semichord>0, "Semichord must be positive")
-        @assert(hasmethod(camber_func, (Float64,)), "Camber function "*
-            "must accept single argument in [-1 (LE), 1 (TE)].")
-        @assert(hasmethod(camber_func, (Real,)), "Camber function "*
-            "must accept real arguments for automatic differentiation.")
-        return new(semichord, camber_func, x->ForwardDiff.derivative(camber_func, x))
-    end
-    function ThinFoilGeometry(semichord::Real, camber_func::Function,
-        camber_slope::Function)
-        @assert(semichord>0, "Semichord must be positive")
-        @assert(hasmethod(camber_func, (Float64,)), "Camber function "*
-            "must accept single argument in [-1 (LE), 1 (TE)].")
-        @assert(hasmethod(camber_slope, (Float64,)), "Camber slope function "*
-            "must accept single argument in [-1 (LE), 1 (TE)].")
-        return new(semichord, camber_func, camber_slope)
-    end
-end
-
-mutable struct RigidKinematics2D
-    z_pos :: Function
-    dzdt :: Function
-    AoA :: Function
-    dAoAdt :: Function
-    pivot_position :: Real
-    function RigidKinematics2D(z::Function, AoA::Function, pivot_position)
-        @assert(hasmethod(z, (Float64,)), "z function "*
-            "must accept single argument of time.")
-        @assert(hasmethod(z, (Real,)), "z function "*
-            "must accept real arguments for automatic differentiation.")
-        @assert(hasmethod(AoA, (Float64,)),  "AoA function "*
-        "must accept single argument of time.")
-        @assert(hasmethod(AoA, (Real,)), "AoA function "*
-            "must accept real arguments for automatic differentiation.")
-        return new(
-            z, x->ForwardDiff.derivative(z, x), 
-            AoA, x->ForwardDiff.derivative(AoA, x), pivot_position)
-    end
-end
-
-mutable struct ParticleGroup2D
-    positions :: Matrix{Float32} # An N by 3 Matrix
-    vorts :: Vector{Float32}
-    function ParticleGroup2D()
-        return new(zeros(Float32, 0, 2), zeros(Float32, 0))
-    end
-end
+#
+# LAUTAT.jl
+#
+# Implementation of Ramesh's large amplitude unsteady thin aerofoil theory.
+#
+# Copyright HJAB 2019
+#
+################################################################################
 
 """
 Large amplitude unsteady lifting line theory.
