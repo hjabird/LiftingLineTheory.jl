@@ -9,7 +9,15 @@ import SpecialFunctions
 import FastGaussQuadrature
 
 #= Aerodynamics functions --------------------------------------------------=#
-# Theodorsen_fn in TheodorsenSimple.jl
+# theodorsen_fn in TheodorsenSimple.jl
+
+function sears_fn(k :: Real)
+    @assert(k > 0)
+    ret = (theodorsen_fn(k) * (
+        SpecialFunctions.besselj0(k) - im * SpecialFunctions.besselj1(k)) +
+        im * SpecialFunctions.besselj1(k))
+    return ret
+end
 
 """
 Generate a Wagner function of using a variable number of terms.

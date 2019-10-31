@@ -34,6 +34,7 @@ export
 	to_vtk,
 	csv_titles,
 	csv_row,
+	from_matrix,
 	
 	# For querying wings
 	aspect_ratio, 
@@ -49,11 +50,14 @@ export
 	eldredge_ramp,
 	wagner_fn,
 	theodorsen_fn,
+	sears_fn,
 
-	# Generation of geometries
+	# Generation of geometries / kinematics
 	make_rectangular,
 	make_elliptic,
-	make_flat_plate
+	make_flat_plate,
+	make_plunge_function,
+	make_pitch_function
 	
 using CVortex
 import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature
@@ -70,4 +74,4 @@ include("HarmonicULLT.jl")			# Harmonic ULLT
 include("ParticleGroup2D.jl")		# A vortex particle holder.
 include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
 include("LAULLT.jl")				# Large amplitude lifting line theory
-end
+end #END module
