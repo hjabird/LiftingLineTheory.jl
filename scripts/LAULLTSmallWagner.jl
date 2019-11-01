@@ -6,11 +6,12 @@ using LiftingLineTheory
 using PyPlot
 
 let
-    AR = 8
+    AR = 100
     wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
     amp = deg2rad(2)
     dt = 0.015
     nsteps = 1000
+
 
 	
 	println("Comparing LAULLT to Wagner.")

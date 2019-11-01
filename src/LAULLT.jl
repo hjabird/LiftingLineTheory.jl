@@ -1,3 +1,12 @@
+#
+# LAULLT.jl
+#
+# Large amplitude unsteady lifting line theory. A lifting line theory based
+# upon unsteady thin aerofoil theory.
+#
+# Copyright HJAB 2019
+#
+################################################################################
 
 """
 A vortex lattice with a "missing" edge when it is evaluated on i = 0.
@@ -40,6 +49,7 @@ mutable struct LAULLT
     wake_discretisation :: Union{Nothing, IncompleteVortexLattice}
     segmentation :: Vector{Float64}
 
+    # Construct with pretty much everything directly exposed
     function LAULLT(;U=[1.,0]::Vector{<:Real}, 
         wing_planform=make_rectangular(StraightAnalyticWing, 4, 4),
         inner_solution_positions::Vector{<:Real}=
@@ -90,6 +100,41 @@ mutable struct LAULLT
         end
         return new(inner_probs, inner_solution_positions, wing_planform, nothing,
             segmentation)
+    end
+
+    # Simplified constructor
+    function LAULLT(
+        wing::StraightAnalyticWing,
+        kinematics::RigidKinematics2D;
+        U=[1.,0]::Vector{<:Real},
+        num_inner_fourier_terms=8::Int,
+        num_inner_solutions=8::Int,
+        inner_solution_mapping=xinp->xinp,                                  # Map [-1,1] to [-1,1] monotonic
+        outer_lattice_refinement=3::Int,                                        # -1 for not set, or value for set.
+        outer_lattice_mapping=xinp->xinp,                                   # Map [-1,1] to [-1,1] monotonic
+        current_time=0.0::Real,
+        dt=0.015::Real
+        )
+
+        # Generate inner solution positions
+        s = wing.semispan
+        @assert(num_inner_solutions>=1, "Number of inner solutions must be +ve")
+        pos_inner = range(-1, stop=1, length=num_inner_solutions+1)
+        pos_inner = (pos_inner[2:end]+pos_inner[1:end-1])/2
+        pos_inner = map(inner_solution_mapping, pos_inner)
+
+        # Generate outer lattice segmentation
+        @assert(outer_lattice_refinement>=1, "outer refinement must be +ve")
+        lat_outer = range(-1, stop=1, 
+            length=(outer_lattice_refinement*num_inner_solutions)+1)
+        lat_outer = map(outer_lattice_mapping, lat_outer)
+
+        # Final generation of object
+        ret = LAULLT(;wing_planform=wing, kinematics=kinematics,
+            num_inner_fourier_terms=num_inner_fourier_terms,
+            inner_solution_positions=pos_inner, 
+            segmentation=lat_outer)
+        return ret
     end
 end
 

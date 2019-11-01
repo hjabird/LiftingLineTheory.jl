@@ -17,7 +17,7 @@ end
 Evaluate a simple Theodorsen like problem.
 pitch_loc maps -1 to LE, 1 to TE.
 """
-function theodorsen_simple(k::Real, heave_amp::Number, pitch_amp::Number; 
+function theodorsen_simple_cl(k::Real, heave_amp::Number, pitch_amp::Number; 
     pitch_loc::Real=0, chord::Real=1, U::Real=1)
     @assert(k > 0, "Chord reduced frequency must be positive.")
     @assert(pitch_loc == pitch_loc, "Pitch location must be a normal number.")

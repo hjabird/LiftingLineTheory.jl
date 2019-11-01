@@ -16,6 +16,7 @@ let
     dt = 0.05
     nsteps = 300
 
+
 	
 	println("Comparing LAULLT with Sclavounos in heave.")
 	println("k = ", k)
@@ -79,6 +80,11 @@ let
     ts = collect(0:dt:dt*nsteps)
     clst = real.(cls .* exp.(im * omega * ts))
     plot(ts, clst, label="Streamwise filaments ULLT")
+    
+    cls = LiftingLineTheory.theodorsen_simple_cl(k, amp, 0)
+    ts = collect(0:dt:dt*nsteps)
+    clst = real.(cls .* exp.(im * omega * ts))
+    plot(ts, clst, label="Theodorsen")
 
     clst2d = LiftingLineTheory.theodorsen_simple(k, amp, 0)
     ts = collect(0:dt:dt*nsteps)

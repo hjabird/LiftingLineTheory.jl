@@ -9,7 +9,15 @@ import SpecialFunctions
 import FastGaussQuadrature
 
 #= Aerodynamics functions --------------------------------------------------=#
-# Theodorsen_fn in TheodorsenSimple.jl
+# theodorsen_fn in TheodorsenSimple.jl
+
+function sears_fn(k :: Real)
+    @assert(k > 0)
+    ret = (theodorsen_fn(k) * (
+        SpecialFunctions.besselj0(k) - im * SpecialFunctions.besselj1(k)) +
+        im * SpecialFunctions.besselj1(k))
+    return ret
+end
 
 """
 Generate a Wagner function of using a variable number of terms.
@@ -71,7 +79,7 @@ function wagner_fn(s :: Real)
 end
 
 #= Mappings from Real->Real ------------------------------------------------=#
-function linear_remap(
+function linear_remap(  # Checked. GOOD.
     pointin :: Number,   weightin :: Number,
     old_a :: Number,     old_b :: Number,
     new_a :: Number,     new_b :: Number )
@@ -82,7 +90,7 @@ function linear_remap(
     return p_new, w_new
 end
 
-function linear_remap(
+function linear_remap(  # GOOD.
     pointin :: Vector{<:Number},   weightin :: Vector{<:Number},
     old_a :: Number,     old_b :: Number,
     new_a :: Number,     new_b :: Number )
