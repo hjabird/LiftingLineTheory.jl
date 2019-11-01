@@ -9,11 +9,11 @@ using PyPlot
 let
     AR = 3
     wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
-    srf = 3
+    srf = 1
     k = srf / AR
     amp = 0.01
     omega = 2 * k
-    dt = 0.015
+    dt = 0.05
     nsteps = 300
 
 	
@@ -79,6 +79,11 @@ let
     ts = collect(0:dt:dt*nsteps)
     clst = real.(cls .* exp.(im * omega * ts))
     plot(ts, clst, label="Streamwise filaments ULLT")
+
+    clst2d = LiftingLineTheory.theodorsen_simple(k, amp, 0)
+    ts = collect(0:dt:dt*nsteps)
+    clst2d = real.(clst2d .* exp.(im * omega * ts))
+    plot(ts, clst2d, label="Theodorsen")
 
     xlabel("Time")
     ylabel("C_L")

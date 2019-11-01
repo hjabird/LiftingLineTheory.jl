@@ -18,7 +18,7 @@ let
         prob = LAUTAT(;
             kinematics=RigidKinematics2D(hvfn, x->0, 0.0),
             dt=dtstar,
-            regularisation=singular_regularisation())
+            regularisation=winckelmans_regularisation())
         hdr = csv_titles(prob)
         rows = zeros(0, length(hdr))
         nsteps = Int64(ceil(20/dtstar))
@@ -29,8 +29,7 @@ let
 
         theod_amp = -2*pi*(theodorsen_fn(ks[i]) + im * ks[i] / 2) *
             im * omega * amp
-        plot(rows[50:end, 1], rows[50:end, 10] ./ abs(theod_amp), label="k="*string(ks[i]))
-        println(hdr[1,10])
+        plot(rows[50:end, 1], rows[50:end, 9] ./ abs(theod_amp), label="k="*string(ks[i]))
     end
     xlabel("Time")
     ylabel("C_L normalised with theodorsen CL")
