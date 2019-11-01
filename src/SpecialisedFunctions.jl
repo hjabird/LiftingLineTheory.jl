@@ -96,6 +96,36 @@ function linear_remap(
     return pout, wout
 end
 
+function telles_quadratic_remap(
+    pointin :: Number,   weightin :: Number,
+    lim_a :: Number,     lim_b :: Number,
+    singularity_pos :: Number)
+
+    @assert((singularity_pos==lim_a) || (singularity_pos==lim_b),
+        "Singularity position must be equal to one of the limits")
+    p, w = linear_remap(pointin, weightin, lim_a, lim_b, -1, 1)
+    sp = singularity_pos
+    tp = (1 - p^2)*(sp + sqrt(sp^2 - 1)) / 2 + p
+    tw = (-p * (sp + sqrt(sp^2 - 1)) + 1) * w
+    p, w = linear_remap(tp, tw, -1, 1, lim_a, lim_b)
+    return p, w
+end
+
+function telles_quadratic_remap(
+    pointin :: Vector{<:Number},   weightin :: Vector{<:Number},
+    lim_a :: Number,     lim_b :: Number,
+    singularity_pos :: Number )
+    @assert(length(pointin)==length(weightin))
+    pout = deepcopy(pointin)
+    wout = deepcopy(weightin)
+    for i = 1 : length(pointin)
+        pout[i], wout[i] = telles_quadratic_remap(pointin[i], weightin[i], 
+        lim_a, lim_b, singularity_pos)
+    end
+    return pout, wout
+end
+
+
 #= Laplace transform -------------------------------------------------------=#
 function laplace(
     function_in_t :: Function, s :: Real)
