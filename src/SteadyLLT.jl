@@ -174,3 +174,10 @@ function bound_vorticity(a::SteadyLLT, y::Real)
     end
     return s
 end
+
+function bound_vorticity_deriv(a::SteadyLLT, y::Real)
+    @assert(abs(y) < a.wing.semispan)
+    error("To do")
+end
+
+
