@@ -199,6 +199,130 @@ function eldredge_ramp(
     return log(t11n / t11d)
 end
 
+#   Struve function -----------------------------------------------------------
+function struve_H(nu::Int, x::Real)
+    return struve_H(nu, Complex(x))
+end
+
+function struve_H(nu::Int, z::Complex)
+    val = 0
+    if nu == 0
+        val = struve_H0(z)
+    elseif nu == 1
+        val = struve_H1(z)
+    elseif nu == -1
+        # Use reccurance relation (Abramowitz & Stegan 12.1.9)
+        val = 1 / (sqrt(pi) * SpecialFunctions.gamma(3/2)) - struve_H1(zx)
+    else 
+        error("Not yet implemented.")
+    end
+    return val
+end
+
+function struve_H0(z::Complex)
+    max_terms = 100
+    tol = 1e-6
+    summation = 0
+    iter = 0
+    ret = 0
+    if abs(z) < 4 # Abramowitz & Stegan 12.1.5
+        den = 1
+        zsq = z^2
+        num = -1/z
+        for i = 1:max_terms
+            iter += 1
+            old_summation = summation
+            num *= -zsq
+            den *= (2*i - 1)^2
+            summation += num / den
+            err = abs(summation - old_summation) / abs(old_summation)
+            if err < tol
+                break
+            end
+        end
+        if iter == max_terms 
+            @warn("Failed to converge to specified tolerance")
+        end    
+        ret = 2 * summation / pi
+    else
+        println("Large z branch")
+        dzsq = 1/z^2
+        term = -1
+        summation = 1 / z
+        iter += 1
+        num = 1/z
+        for i = 2:max_terms
+            iter += 1
+            old_summation = summation
+            println(2*i-3)
+            num *= -dzsq * (2*i - 3)^2
+            println(num)
+            summation += num
+            err = abs(summation - old_summation) / abs(old_summation)
+            if err < tol
+                break
+            end
+        end
+        if iter == max_terms 
+            @warn("Failed to converge to specified tolerance")
+        end
+        ret = 2 * summation / pi + SpecialFunctions.bessely(0, z)
+    end
+    return ret 
+end
+
+function struve_H1(z::Complex)  
+    max_terms = 100
+    tol = 1e-6
+    summation = 0
+    iter = 0
+    if abs(z) < 4 # Abramowitz & Stegan 12.1.5
+        den = 1
+        zsq = z^2
+        num = -1
+        for i = 1:max_terms
+            iter += 1
+            old_summation = summation
+            num *= -zsq
+            den *= (2*i - 1)*(2*i + 1)
+            summation += num / den
+            err = abs(summation - old_summation) / abs(old_summation)
+            if err < tol
+                break
+            end
+        end
+        if iter == max_terms 
+            @warn("Failed to converge to specified tolerance")
+        end
+    else
+        println("Large z branch")
+        dzsq = 1/z^2
+        term = -1
+        summation = 1 / z
+        iter += 1
+        for i = 2:max_terms
+            iter += 1
+            old_summation = summation
+            num *= -dzsq * (2*i - 3)^2
+            summation += num / den
+            err = abs(summation - old_summation) / abs(old_summation)
+            if err < tol
+                break
+            end
+        end
+        if iter == max_terms 
+            @warn("Failed to converge to specified tolerance")
+        end
+    end
+    return 2 * summation / pi
+end
+
+function struve_L(nu::Int, z::Complex)
+    t1 = -im * exp(-im * nu * pi / 2)
+    t2 = struve_H(nu, im*z)
+    return t1 * t2
+end
+
 #   EXPONENTIAL INTEGRAL                                                      
 #   Julia does not have a exponential integral implementation. This is 
 #   copied from 

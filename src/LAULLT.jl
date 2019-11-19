@@ -133,7 +133,8 @@ mutable struct LAULLT
         ret = LAULLT(;wing_planform=wing, kinematics=kinematics,
             num_inner_fourier_terms=num_inner_fourier_terms,
             inner_solution_positions=pos_inner, 
-            segmentation=lat_outer)
+            segmentation=lat_outer,
+            dt=dt)
         return ret
     end
 end
@@ -393,6 +394,11 @@ end
 function drag_coefficient(a::LAULLT)
     ~, dragc = lift_and_drag_coefficients(a)
     return dragc
+end
+
+function moment_coefficient(a::LAULLT, y::Real)
+
+    return moment_coeff
 end
 
 function to_vtk(a::LAULLT, filename::String)
