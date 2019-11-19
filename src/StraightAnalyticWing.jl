@@ -4,8 +4,6 @@
 # Copyright HJA Bird 2019
 #==============================================================================#
 
-import HCubature
-
 mutable struct StraightAnalyticWing
     semispan :: Real        # Half the full span of the wing
     chord_fn :: Function    # Defined in [-semispan, semispan]
