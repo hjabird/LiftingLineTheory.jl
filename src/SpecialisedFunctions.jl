@@ -189,14 +189,112 @@ AIAA 2010-1085
 function eldredge_ramp(
     t::Real, 
     t1::Real, t2::Real, t3::Real, t4::Real, 
-    a::Real, U_inf::Real, chord::Real)
+    U_inf::Real, chord::Real; a=-1, sigma=0.9)
     @assert(chord > 0, "Chord must be positive.")
     @assert(U_inf > 0, "Reference velocity must be positive.")
-    @assert(a > 0, "Free parameter a must be positive.")
+    @assert(sigma > 0, "Free parameter a must be positive.")
+    @assert(sigma < 1, "Sigma must be in [0,1]")
     @assert(t1 < t2 < t3 < t4, "Time parameters must be in order.")
+    a = a > 0 ? a : pi^2 / (4 * (t2 - t1) * (1 - sigma))
     t11n = cosh(a * U_inf * (t-t1) / chord) * cosh(a * U_inf * (t-t4) / chord)
     t11d = cosh(a * U_inf * (t-t2) / chord) * cosh(a * U_inf * (t-t3) / chord) 
     return log(t11n / t11d)
+end
+
+#- Struve functions - homebaked ----------------------------------------------
+
+function struve_l(v::Int, z::Number)
+    return -im * exp(- im * pi * v / 2) * struve_h(v, im * z)
+end
+
+function struve_k(v::Int, z::Number)
+    return struve_h(v, z) - SpecialFunctions.bessely(v, z)
+end
+
+function struve_m(v::Int, z::Number)
+    return struve_l(v, z) - SpecialFunctions.besseli(v, z)
+end
+
+function struve_h(v::Int, z::Number)
+    if v == 0
+        return struve_h0_composite(z)
+    elseif v == 1
+        return struve_h1_composite(z)
+    elseif v == -1
+        return 1/(pi/2) - struve_h1_composite(z)
+    else
+        error("Not yet implemented. ")
+    end
+end
+
+function struve_h0_power_series(z::Number; terms=60)
+    sum = 0.
+    num = -1/z
+    den = 1.
+    zsq = z^2
+    for n = 1 : terms
+        num *= -zsq
+        den *= (2 * n - 1)^2
+        sum += num / den
+    end
+    return sum * 2 / pi
+end
+
+function struve_h1_power_series(z::Number; terms=60)
+    sum = 0.
+    num = ComplexF64(-1.)
+    den = 1.
+    zsq = z^2
+    for n = 1 : terms
+        num *= -zsq
+        den *= (2*n - 1) * (2*n + 1)
+        sum += num / den
+    end
+    return sum * 2 / pi
+end
+
+function struve_h0_laurent_bigz(z::Number; terms=10)
+    sum = 0.
+    zsq = 1/z^2
+    term = -z
+    for n = 1 : terms
+        term *= -zsq * (2*n - 3)^2
+        sum += term
+    end
+    ret = sum * 2 / pi + SpecialFunctions.bessely(0, z)
+    return ret
+end
+
+function struve_h1_laurent_bigz(z::Number; terms=10)
+    sum = 1.
+    zsq = 1/z^2
+    term = 1
+    for n = 1 : terms-1
+        term *= -zsq * (2*n - 3) * (2*n - 1)
+        println("sign ", term/abs(term))
+        println("numers = ", (2*n - 3), " ", (2*n - 1))
+        sum += term
+    end
+    ret = sum * 2 / pi + SpecialFunctions.bessely(1, z)
+    return ret
+end
+
+function struve_h0_composite(z::Number)
+    if abs(z) > 20
+        ret = struve_h0_laurent_bigz(z; terms=9)
+    else
+        ret = struve_h0_power_series(z; terms=60)
+    end
+    return ret
+end
+
+function struve_h1_composite(z::Number)
+    if abs(z) > 20
+        ret = struve_h1_laurent_bigz(z; terms=9)
+    else
+        ret = struve_h1_power_series(z; terms=60)
+    end
+    return ret
 end
 
 #   EXPONENTIAL INTEGRAL                                                      
