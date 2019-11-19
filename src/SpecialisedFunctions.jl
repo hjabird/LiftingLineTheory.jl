@@ -189,138 +189,112 @@ AIAA 2010-1085
 function eldredge_ramp(
     t::Real, 
     t1::Real, t2::Real, t3::Real, t4::Real, 
-    a::Real, U_inf::Real, chord::Real)
+    U_inf::Real, chord::Real; a=-1, sigma=0.9)
     @assert(chord > 0, "Chord must be positive.")
     @assert(U_inf > 0, "Reference velocity must be positive.")
-    @assert(a > 0, "Free parameter a must be positive.")
+    @assert(sigma > 0, "Free parameter a must be positive.")
+    @assert(sigma < 1, "Sigma must be in [0,1]")
     @assert(t1 < t2 < t3 < t4, "Time parameters must be in order.")
+    a = a > 0 ? a : pi^2 / (4 * (t2 - t1) * (1 - sigma))
     t11n = cosh(a * U_inf * (t-t1) / chord) * cosh(a * U_inf * (t-t4) / chord)
     t11d = cosh(a * U_inf * (t-t2) / chord) * cosh(a * U_inf * (t-t3) / chord) 
     return log(t11n / t11d)
 end
 
-#   Struve function -----------------------------------------------------------
-function struve_H(nu::Int, x::Real)
-    return struve_H(nu, Complex(x))
+#- Struve functions - homebaked ----------------------------------------------
+
+function struve_l(v::Int, z::Number)
+    return -im * exp(- im * pi * v / 2) * struve_h(v, im * z)
 end
 
-function struve_H(nu::Int, z::Complex)
-    val = 0
-    if nu == 0
-        val = struve_H0(z)
-    elseif nu == 1
-        val = struve_H1(z)
-    elseif nu == -1
-        # Use reccurance relation (Abramowitz & Stegan 12.1.9)
-        val = 1 / (sqrt(pi) * SpecialFunctions.gamma(3/2)) - struve_H1(zx)
-    else 
-        error("Not yet implemented.")
-    end
-    return val
+function struve_k(v::Int, z::Number)
+    return struve_h(v, z) - SpecialFunctions.bessely(v, z)
 end
 
-function struve_H0(z::Complex)
-    max_terms = 100
-    tol = 1e-6
-    summation = 0
-    iter = 0
-    ret = 0
-    if abs(z) < 4 # Abramowitz & Stegan 12.1.5
-        den = 1
-        zsq = z^2
-        num = -1/z
-        for i = 1:max_terms
-            iter += 1
-            old_summation = summation
-            num *= -zsq
-            den *= (2*i - 1)^2
-            summation += num / den
-            err = abs(summation - old_summation) / abs(old_summation)
-            if err < tol
-                break
-            end
-        end
-        if iter == max_terms 
-            @warn("Failed to converge to specified tolerance")
-        end    
-        ret = 2 * summation / pi
+function struve_m(v::Int, z::Number)
+    return struve_l(v, z) - SpecialFunctions.besseli(v, z)
+end
+
+function struve_h(v::Int, z::Number)
+    if v == 0
+        return struve_h0_composite(z)
+    elseif v == 1
+        return struve_h1_composite(z)
+    elseif v == -1
+        return 1/(pi/2) - struve_h1_composite(z)
     else
-        println("Large z branch")
-        dzsq = 1/z^2
-        term = -1
-        summation = 1 / z
-        iter += 1
-        num = 1/z
-        for i = 2:max_terms
-            iter += 1
-            old_summation = summation
-            println(2*i-3)
-            num *= -dzsq * (2*i - 3)^2
-            println(num)
-            summation += num
-            err = abs(summation - old_summation) / abs(old_summation)
-            if err < tol
-                break
-            end
-        end
-        if iter == max_terms 
-            @warn("Failed to converge to specified tolerance")
-        end
-        ret = 2 * summation / pi + SpecialFunctions.bessely(0, z)
+        error("Not yet implemented. ")
     end
-    return ret 
 end
 
-function struve_H1(z::Complex)  
-    max_terms = 100
-    tol = 1e-6
-    summation = 0
-    iter = 0
-    if abs(z) < 4 # Abramowitz & Stegan 12.1.5
-        den = 1
-        zsq = z^2
-        num = -1
-        for i = 1:max_terms
-            iter += 1
-            old_summation = summation
-            num *= -zsq
-            den *= (2*i - 1)*(2*i + 1)
-            summation += num / den
-            err = abs(summation - old_summation) / abs(old_summation)
-            if err < tol
-                break
-            end
-        end
-        if iter == max_terms 
-            @warn("Failed to converge to specified tolerance")
-        end
+function struve_h0_power_series(z::Number; terms=60)
+    sum = 0.
+    num = -1/z
+    den = 1.
+    zsq = z^2
+    for n = 1 : terms
+        num *= -zsq
+        den *= (2 * n - 1)^2
+        sum += num / den
+    end
+    return sum * 2 / pi
+end
+
+function struve_h1_power_series(z::Number; terms=60)
+    sum = 0.
+    num = ComplexF64(-1.)
+    den = 1.
+    zsq = z^2
+    for n = 1 : terms
+        num *= -zsq
+        den *= (2*n - 1) * (2*n + 1)
+        sum += num / den
+    end
+    return sum * 2 / pi
+end
+
+function struve_h0_laurent_bigz(z::Number; terms=10)
+    sum = 0.
+    zsq = 1/z^2
+    term = -z
+    for n = 1 : terms
+        term *= -zsq * (2*n - 3)^2
+        sum += term
+    end
+    ret = sum * 2 / pi + SpecialFunctions.bessely(0, z)
+    return ret
+end
+
+function struve_h1_laurent_bigz(z::Number; terms=10)
+    sum = 1.
+    zsq = 1/z^2
+    term = 1
+    for n = 1 : terms-1
+        term *= -zsq * (2*n - 3) * (2*n - 1)
+        println("sign ", term/abs(term))
+        println("numers = ", (2*n - 3), " ", (2*n - 1))
+        sum += term
+    end
+    ret = sum * 2 / pi + SpecialFunctions.bessely(1, z)
+    return ret
+end
+
+function struve_h0_composite(z::Number)
+    if abs(z) > 20
+        ret = struve_h0_laurent_bigz(z; terms=9)
     else
-        println("Large z branch")
-        dzsq = 1/z^2
-        term = -1
-        summation = 1 / z
-        iter += 1
-        for i = 2:max_terms
-            iter += 1
-            old_summation = summation
-            num *= -dzsq * (2*i - 3)^2
-            summation += num / den
-            err = abs(summation - old_summation) / abs(old_summation)
-            if err < tol
-                break
-            end
-        end
-        if iter == max_terms 
-            @warn("Failed to converge to specified tolerance")
-        end
+        ret = struve_h0_power_series(z; terms=60)
     end
-    return 2 * summation / pi
+    return ret
 end
 
-function struve_L(nu::Int, z::Complex)
-    t1 = -im * exp(-im * nu * pi / 2)
-    t2 = struve_H(nu, im*z)
-    return t1 * t2
+function struve_h1_composite(z::Number)
+    if abs(z) > 20
+        ret = struve_h1_laurent_bigz(z; terms=9)
+    else
+        ret = struve_h1_power_series(z; terms=60)
+    end
+    return ret
 end
 
 #   EXPONENTIAL INTEGRAL                                                      

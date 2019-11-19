@@ -401,12 +401,14 @@ function moment_coefficient(a::LAULLT, y::Real)
     return moment_coeff
 end
 
-function to_vtk(a::LAULLT, filename::String)
+function to_vtk(a::LAULLT, filename::String;
+    translation::Vector{<:Real}=[0,0,0])
     wake = a.wake_discretisation
     if prod(size(wake.vertices))!= 0
         fstarts, fends, fstrs = to_filaments(wake)
         nfils = size(fstarts)[1]
         points = vcat(fstarts, fends)
+        points .+= translation'
         cells = Vector{WriteVTK.MeshCell}(undef, nfils)        
         celldata = fstrs
         for i = 1 : nfils
