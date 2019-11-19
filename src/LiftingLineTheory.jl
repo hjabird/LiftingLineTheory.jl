@@ -15,9 +15,12 @@ export
 	StraightAnalyticWing,
     DownwashModel,
 	HarmonicULLT,
+	HarmonicULLT2,
+	HarmonicULLT3,
 	LAUTAT,
 	LAULLT,
 	RigidKinematics2D,
+	VortexLattice,
 	
 	# Simulation control
 	advance_one_step,
@@ -36,10 +39,13 @@ export
 	csv_row,
 	from_matrix,
 	
-	# For querying wings
+	# For querying geometry
 	aspect_ratio, 
 	area,
-	
+	get_vertices,
+	set_vertices!,
+	to_filaments,
+		
 	# DownwashModel enumerations
 	strip_theory,
 	unsteady,
@@ -69,8 +75,11 @@ include("ThinFoilGeometry.jl")		# Thin aerofoil representation
 include("Interpolators1D.jl")		# Cubic spline interpolation
 include("TheodorsenSimple.jl")		# Theodorsen + simple evaluation of Thoed.
 include("StraightAnalyticWing.jl")	# Define wing  planform shape
+include("VortexLattice.jl")			# A vortex lattice
 include("SteadyLLT.jl")				# Prandtl lifting-line theory
 include("HarmonicULLT.jl")			# Harmonic ULLT
+include("HarmonicULLT2.jl")			# Harmonic ULLT
+include("HarmonicULLT3.jl")			# Harmonic ULLT
 include("ParticleGroup2D.jl")		# A vortex particle holder.
 include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
 include("LAULLT.jl")				# Large amplitude lifting line theory

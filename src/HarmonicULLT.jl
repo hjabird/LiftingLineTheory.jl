@@ -5,6 +5,8 @@
 #
 #==============================================================================#
 
+using PyPlot
+
 mutable struct HarmonicULLT
     angular_fq :: Real              # in rad / s
     free_stream_vel :: Real
@@ -184,7 +186,7 @@ function p_eq(
     a :: HarmonicULLT,
     delta_y :: Real)
     # Is correct. See notes #7 pg.6 or #1 pg.63 or #1 pg. 76.
-    # Eq. 3.21 in Sclavounos1987.
+    # Eq. 3.21 in Sclavounos1987. Checked vs. mathematica.
     function integrand1(t :: T) where T <: Real
         val = - delta_y * exp(-delta_y * t) * (asin(1 / t) + sqrt(t^2 - 1) - t)
         return val / exp(-(t-1))    # Because of the quadrature
@@ -274,7 +276,7 @@ function integrate_gammaprime_k_term1(
                                                     singularity_coefficient)
         return singular_part * singular_subtraction
     end
-    
+
     nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)
     pts2 = map(
         x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),
@@ -282,7 +284,7 @@ function integrate_gammaprime_k_term1(
     pts1 = map(
         x->linear_remap(x[1], x[2], -1, 1, 0, theta_singular),
         zip(nodes1, weights1))
-    integral =
+    integral = 
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) +
         singularity_coefficient * 0. # Glauert integral
@@ -294,6 +296,7 @@ function integrate_gammaprime_k_term2(
     a :: HarmonicULLT,
     y :: Real,
     k :: Integer)
+    # Confirmed against Mathematica evaluation of integrals.
     
     @assert(abs(y) < a.wing.semispan)
     @assert(k >= 0)
@@ -440,7 +443,7 @@ function integrate_gammaprime_k_streamwise_fil(
         # integrate_gammaprime_k_streamwise_fil_subint(a, 0, k)
     function integrand(theta_0)
         eta = theta_to_y(a, theta_0)
-        singular = a.wing.semispan * cos((2*k +1)*theta_0) / (y - eta)
+        singular = a.wing.semispan * cos((2*k +1)*theta_0) / (y - eta) # DOES THIS NEED at 1 / 2 in it?
         non_singular = 
             integrate_gammaprime_k_streamwise_fil_subint(a, y - eta, k)
         return singular * (non_singular - ssm_var)
