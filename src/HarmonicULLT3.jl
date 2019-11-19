@@ -197,26 +197,29 @@ function integrate_gammaprime_k_streamwise_psuedosteady(
     return integral
 end
 
+using PyPlot
 function integrate_gammaprime_k_streamwise_fil(
     a :: HarmonicULLT3,
     y :: Real,
     k :: Integer)
 
     theta_singular = y_to_theta(a, y)
-    ssm_var = 1 # save evaluating stuff.
+    v = a.angular_fq / a.free_stream_vel
+    s = a.wing.semispan
     function integrand(theta_0)
-        eta = theta_to_y(a, theta_0)
-        dy = y - eta
-        v = a.angular_fq / a.free_stream_vel
-        singular = a.wing.semispan * cos((2*k +1)*theta_0) / (y - eta) # DOES THIS NEED at 1 / 2 in it?
-        sgn = y - eta > 0 ? 1 : -1
-        non_singular = 
-            -sgn*v / (8*pi) * ( 
-                2 * SpecialFunctions.besselk(1,v*abs(dy))                       # This bit goes as 1/dy
-                - im * pi * SpecialFunctions.besseli(0, v * abs(dy)) 
-                + im * pi * struve_l(-1, v*dy) )
-        return singular * (non_singular - ssm_var)
+        dy = y - theta_to_y(a, theta_0)
+        sgn = dy > 0 ? 1 : -1
+        t1 = - dsintheta_dtheta(a, theta_0, k) / (8 * pi)
+        # We remove the singularity here and need to add it back later.
+        t2 = 2*(v*sgn*SpecialFunctions.besselk(1,v*abs(dy)) - 1/dy)
+        t3 = sgn * im * pi * v * (struve_l(-1, v*dy) - 
+            SpecialFunctions.besseli(0, v*abs(dy)))                 # Term 3 temporarily removed!_---------------
+        return -10.5 * t1 * (t2 ) / (2*k + 1)
     end
+
+    thetas = collect(0:0.01:pi)
+    its = integrand.(thetas)
+    plot(thetas, its)
 
     nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
     pts2 = map(
@@ -228,9 +231,8 @@ function integrate_gammaprime_k_streamwise_fil(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    coeff = - (2*k + 1) / (2 * a.wing.semispan)
-    return coeff * (integral -
-        ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
+    coeff = (2*k+1) / (2 * s)
+    return coeff * (integral + 1/(4*s) * sin((2* k + 1) * theta_singular) / sin(theta_singular))
 end
 
 function integrate_gammaprime_k_spanwise_fil(
@@ -238,6 +240,7 @@ function integrate_gammaprime_k_spanwise_fil(
     y :: Real,
     k :: Integer)
 
+    println("Integrating spanwise!")
     theta_sing = y_to_theta(a, y) 
     gamma_local = sin((2 * k + 1) * theta_sing)
     v = a.angular_fq / a.free_stream_vel
