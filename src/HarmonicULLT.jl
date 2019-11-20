@@ -439,8 +439,7 @@ function integrate_gammaprime_k_streamwise_fil(
     k :: Integer)
 
     theta_singular = y_to_theta(a, y)
-    ssm_var = 1 # save evaluating 
-        # integrate_gammaprime_k_streamwise_fil_subint(a, 0, k)
+    ssm_var = integrate_gammaprime_k_streamwise_fil_subint(a, 0, k)
     function integrand(theta_0)
         eta = theta_to_y(a, theta_0)
         singular = a.wing.semispan * cos((2*k +1)*theta_0) / (y - eta) # DOES THIS NEED at 1 / 2 in it?
@@ -448,6 +447,12 @@ function integrate_gammaprime_k_streamwise_fil(
             integrate_gammaprime_k_streamwise_fil_subint(a, y - eta, k)
         return singular * (non_singular - ssm_var)
     end
+
+    println("Here HarmonicULLT Int steamwise fil")
+    thetas = collect(0:0.01:pi)
+    its = integrand.(thetas)
+    plot(thetas, real.(its), label="HULLT_real")
+    plot(thetas, imag.(its), label="HULLT_imag")
 
     nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
     pts2 = map(

@@ -206,20 +206,30 @@ function integrate_gammaprime_k_streamwise_fil(
     theta_singular = y_to_theta(a, y)
     v = a.angular_fq / a.free_stream_vel
     s = a.wing.semispan
+    function non_singular(theta_0)
+        dy = y - theta_to_y(a, theta_0)
+        sgn = dy > 0 ? 1 : -1
+        t1 = v*abs(dy) != 0 ? v*sgn*dy* SpecialFunctions.besselk(1,v*abs(dy)) : 1
+        t2 = 1/2 * v*sgn*dy * im * pi *  (
+            struve_l(-1, v*dy) - SpecialFunctions.besseli(1, v*abs(dy)))
+        return t1 + t2
+    end
+    ssm_var = non_singular(theta_singular)
+    println(ssm_var)
     function integrand(theta_0)
         dy = y - theta_to_y(a, theta_0)
         sgn = dy > 0 ? 1 : -1
-        t1 = - dsintheta_dtheta(a, theta_0, k) / (8 * pi)
+        sing = s * cos((2*k+1)*theta_0) / dy
         # We remove the singularity here and need to add it back later.
-        t2 = 2*(v*sgn*SpecialFunctions.besselk(1,v*abs(dy)) - 1/dy)
-        t3 = sgn * im * pi * v * (struve_l(-1, v*dy) - 
-            SpecialFunctions.besseli(0, v*abs(dy)))                 # Term 3 temporarily removed!_---------------
-        return -10.5 * t1 * (t2 ) / (2*k + 1)
+        ns = non_singular(theta_0)               # Term 3 temporarily removed! ---------------
+        return sing * (ns - ssm_var)
     end
 
+    println("Here HarmonicULLT3 Int steamwise fil")
     thetas = collect(0:0.01:pi)
     its = integrand.(thetas)
-    plot(thetas, its)
+    plot(thetas, real.(its), label="HULLT3_real")
+    plot(thetas, imag.(its), label="HULLT3_imag")
 
     nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
     pts2 = map(
@@ -231,8 +241,8 @@ function integrate_gammaprime_k_streamwise_fil(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    coeff = (2*k+1) / (2 * s)
-    return coeff * (integral + 1/(4*s) * sin((2* k + 1) * theta_singular) / sin(theta_singular))
+    coeff = (2*k + 1) / (4 * pi * s)
+    return coeff * (integral + ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
 end
 
 function integrate_gammaprime_k_spanwise_fil(
@@ -310,7 +320,7 @@ function integro_diff_mtrx_coeff(
     a :: HarmonicULLT3,
     y_pos :: Real)
 
-    coeff = d_heave_normalised(a, y_pos) / (2 * pi * a.angular_fq * im)
+    coeff = d_heave_normalised(a, y_pos) / (a.angular_fq * im)
     return coeff
 end
 
