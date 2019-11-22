@@ -7,7 +7,7 @@ let
         " and Sclavounos' implementation, the high frequency response "*
         " differs. See Bird & Ramesh, 2019, TCFD.")
     span = 1
-    aspect_ratio = 4
+    aspect_ratio = 4 
     wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, 
         aspect_ratio, span)
     srfs = collect(0.01:0.2:8)
@@ -20,7 +20,7 @@ let
     stcl_ph = zeros(length(srfs))
 
     chord = span / aspect_ratio;
-    added_mass = span * chord^2 * pi / 2.;
+    added_mass = 0.75 * span * chord^2 * pi / 2.;
 
     for i = 1 : length(srfs)
         prob = HarmonicULLT2(omegas[i], wing; num_terms = 9)
