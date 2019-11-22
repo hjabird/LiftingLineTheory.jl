@@ -271,8 +271,6 @@ function struve_h1_laurent_bigz(z::Number; terms=10)
     term = 1
     for n = 1 : terms-1
         term *= -zsq * (2*n - 3) * (2*n - 1)
-        println("sign ", term/abs(term))
-        println("numers = ", (2*n - 3), " ", (2*n - 1))
         sum += term
     end
     ret = sum * 2 / pi + SpecialFunctions.bessely(1, z)
