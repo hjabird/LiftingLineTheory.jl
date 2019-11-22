@@ -448,12 +448,6 @@ function integrate_gammaprime_k_streamwise_fil(
         return singular * (non_singular - ssm_var)
     end
 
-    println("Here HarmonicULLT Int steamwise fil")
-    thetas = collect(0:0.01:pi)
-    its = integrand.(thetas)
-    plot(thetas, real.(its), label="HULLT_real")
-    plot(thetas, imag.(its), label="HULLT_imag")
-
     nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
     pts2 = map(
         x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),

@@ -206,30 +206,23 @@ function integrate_gammaprime_k_streamwise_fil(
     theta_singular = y_to_theta(a, y)
     v = a.angular_fq / a.free_stream_vel
     s = a.wing.semispan
-    function non_singular(theta_0)
-        dy = y - theta_to_y(a, theta_0)
+    function non_singular(dy)
         sgn = dy > 0 ? 1 : -1
-        t1 = v*abs(dy) != 0 ? v*sgn*dy* SpecialFunctions.besselk(1,v*abs(dy)) : 1
-        t2 = 1/2 * v*sgn*dy * im * pi *  (
+        co = v*dy
+        t1 = v*abs(dy) != 0 ? sgn*co* SpecialFunctions.besselk(1,v*abs(dy)) : 1
+        t2 = 1/2 *co* im * pi * (                                               # Extra sign term here to get it to work...
             struve_l(-1, v*dy) - SpecialFunctions.besseli(1, v*abs(dy)))
         return t1 + t2
     end
-    ssm_var = non_singular(theta_singular)
-    println(ssm_var)
+    ssm_var = non_singular(0)
     function integrand(theta_0)
         dy = y - theta_to_y(a, theta_0)
         sgn = dy > 0 ? 1 : -1
         sing = s * cos((2*k+1)*theta_0) / dy
         # We remove the singularity here and need to add it back later.
-        ns = non_singular(theta_0)               # Term 3 temporarily removed! ---------------
+        ns = non_singular(dy)
         return sing * (ns - ssm_var)
     end
-
-    println("Here HarmonicULLT3 Int steamwise fil")
-    thetas = collect(0:0.01:pi)
-    its = integrand.(thetas)
-    plot(thetas, real.(its), label="HULLT3_real")
-    plot(thetas, imag.(its), label="HULLT3_imag")
 
     nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
     pts2 = map(
@@ -241,8 +234,10 @@ function integrate_gammaprime_k_streamwise_fil(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    coeff = (2*k + 1) / (4 * pi * s)
-    return coeff * (integral + ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
+    coeff = -(2*k + 1) / (4 * pi * s)
+    ret = coeff * (integral 
+        - ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
+    return ret
 end
 
 function integrate_gammaprime_k_spanwise_fil(
@@ -250,30 +245,38 @@ function integrate_gammaprime_k_spanwise_fil(
     y :: Real,
     k :: Integer)
 
-    println("Integrating spanwise!")
+    #println("Integrating spanwise!")
     theta_sing = y_to_theta(a, y) 
     gamma_local = sin((2 * k + 1) * theta_sing)
     v = a.angular_fq / a.free_stream_vel
     s = a.wing.semispan
-    coeff = -im * v * gamma_local / (4 * pi)
 
     # Off the wing tips:
-    tipf = dy->im * pi * (
-            SpecialFunctions.besseli(0, v*dy) - struve_l(0, v * dy)) / 2 + 
-            SpecialFunctions.besselk(0, v*dy)
-    tips_effect = coeff * (tipf(s - y) + tipf(s + y))
+    function tip_dw(dy)
+        t1 = -im * gamma_local * v / ( 4 * pi )
+        t21 = im * pi * SpecialFunctions.besseli(0, v * abs(dy)) / 2
+        t22 = SpecialFunctions.besselk(0, v * abs(dy))
+        t23 = -pi * im * struve_l(0, v * dy) / 2
+        return t1 * (t21 + t22 + t23)
+    end
+    tips_effect = tip_dw(s - y) + tip_dw(s + y)
 
     # Over the span:
     function integrand(y0)
         gamma_diff = sin((2 * k + 1) * y_to_theta(a, y0)) - gamma_local
         dy = y - y0
-        k0 = v * dy^2
-        t1 = im * v * k0 * (struve_l(0,k0) - SpecialFunctions.besseli(0,k0)) / 
-            8 * abs(dy)
-        t2 = im * v / (4 * pi * abs(dy))
-        t3 = - k0 * v * SpecialFunctions.besselk(0,k0) / (4 * pi * dy)
-        return t1 + t2 + t3
+        co = - im * v / (4*pi)
+        va = v * abs(dy)
+        t1 = 1 / abs(dy)
+        t2 = v/2 * (-pi*SpecialFunctions.besseli(0, va) + 2*im *SpecialFunctions.besselk(0, va))
+        t3 = pi * struve_l(0, va)
+        return gamma_diff * co * (t1 + t2 + t3)
     end
+    #ys = collect(-s : 0.05: s)
+    #ints = integrand.(ys)
+    #plot(ys, real.(ints), label="Real")
+    #plot(ys, imag.(ints), label="Imag")
+
     nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
     pts2 = map(
         x->linear_remap(x[1], x[2], -1, 1, y, s),
@@ -285,7 +288,7 @@ function integrate_gammaprime_k_spanwise_fil(
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
     
-    return integral + tips_effect
+    return - (tips_effect) - integral 
 end
 
 function gamma_terms_matrix(
