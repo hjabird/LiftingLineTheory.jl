@@ -75,11 +75,8 @@ include("ThinFoilGeometry.jl")		# Thin aerofoil representation
 include("Interpolators1D.jl")		# Cubic spline interpolation
 include("TheodorsenSimple.jl")		# Theodorsen + simple evaluation of Thoed.
 include("StraightAnalyticWing.jl")	# Define wing  planform shape
-<<<<<<< HEAD
 include("CurvedAnalyticWing.jl")	# Define wing  planform shape with curvature
-=======
 include("VortexLattice.jl")			# A vortex lattice
->>>>>>> ec1fcef95cfec6628cb3353606fa6e234212c7f8
 include("SteadyLLT.jl")				# Prandtl lifting-line theory
 include("HarmonicULLT.jl")			# Harmonic ULLT
 include("HarmonicULLT2.jl")			# Harmonic ULLT
