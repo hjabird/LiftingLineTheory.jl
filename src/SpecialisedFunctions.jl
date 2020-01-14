@@ -134,6 +134,354 @@ function telles_quadratic_remap(
 end
 
 
+#= Double exponential remaps for oscillatory integrands --------------------=#
+
+# The Phi function
+function de_remap_semi_inf_osc_rmp_dn(t::Float64, alpha, beta)
+    # See notes #7 pg 55
+    t1d = exp(-2*t - alpha * (1-exp(-t)) - beta * (exp(t)-1))
+    return t1d
+end
+
+function de_remap_semi_inf_osc_rmp_dn_deriv(t::Float64, alpha, beta)
+    t1 = exp(-2*t - alpha * (1-exp(-t)) - beta * (exp(t)-1))
+    t2 = -2 - alpha * exp(-t) - beta * exp(t)
+    return t1 * t2
+end
+
+function de_remap_semi_inf_osc_deriv(t::Float64, alpha, beta)
+    if t != 0
+        d = de_remap_semi_inf_osc_rmp_dn(t, alpha, beta)
+        dd = de_remap_semi_inf_osc_rmp_dn_deriv(t, alpha, beta)
+        t1 = 1/(1-d)
+        t2 = t * dd / (1-d^2)
+        term = t1 + t2
+    else
+        a = alpha
+        b = beta
+        tn = 4 + a^2 + 3*b + b^2 + a * (5 + 2 * b)
+        td = 2 * (2 + a + b)^2
+        term = tn / td
+    end
+    @assert(isfinite(term))
+    return term
+end
+
+function de_remap_semi_inf_osc_int_sin(
+    non_oscl_part::Function, omega::Number)
+
+    m = 16
+    h = pi / m
+    n_m = 10
+    n_p = 10
+    ns = collect(-n_m:n_p)
+
+    beta = 1/4
+    alpha = beta / sqrt(1 + m * log(1 + m)/ (4*pi))
+    @assert(0 <= alpha <= beta <= 1)
+    println("alpha, beta = ", alpha, ", ", beta)
+
+    phi_dn = x->de_remap_semi_inf_osc_rmp_dn(x, alpha, beta)
+    phip = x->de_remap_semi_inf_osc_deriv(x, alpha, beta)
+    
+    phi_dns = map(n->phi_dn(n * h), ns)
+    println("dn = ", phi_dns, "\n")
+    @assert(all(isfinite.(phi_dns)))
+
+    An = map(inp->m*h * inp[1] / (1 - inp[2]), zip(ns, phi_dns))
+    An[n_m + 1] = m / (2 + alpha + beta) # Where t is zero.
+    println("An = ", An, "\n")
+    @assert(all(isfinite.(An)))
+#=
+    Bn = map(
+        inp->phip(inp[1] * h) * (-1)^inp[1] * sin(inp[2] * inp[3]), 
+        zip(ns, An, phi_dns))=#
+    Bn = map(
+        inp->phip(inp[1] * h) * sin(inp[2]), 
+        zip(ns, An, phi_dns))
+    println("Bn = ", Bn, "\n")
+    @assert(all(isfinite.(Bn)))
+
+    terms = non_oscl_part.(An ./ omega) .* Bn ./ omega
+    if !(terms[n_m + 1] == terms[n_m + 1])
+        terms[n_m + 1] = 1
+    end
+
+    plot(An./ omega, terms, marker="*")
+    println("Terms ", terms, "\n")
+    int = pi * sum(terms)
+    return int
+end
+
+#= Fejer Quadrature --------------------------------------------------------=#
+
+# For functions of the form integrate( f(x) * exp(i omega x), x, a, b)
+function fejer_quadrature_exp(
+    non_oscl::Function, omega::Real, a::Real, b::Real; n=-1, finite=true)
+    realpart = fejer_quadrature_cos(non_oscl, omega, a, b; n=n, finite=finite)
+    imagpart = fejer_quadrature_sin(non_oscl, omega, a, b; n=n, finite=finite)
+    return realpart + im * imagpart
+end
+
+function fejer_quadrature_sin(
+    non_oscl::Function, omega::Real, a::Real, b::Real; n=-1, finite=true)
+    @assert(b > a)
+    @assert(isfinite(omega))
+    @assert(hasmethod(non_oscl, (Float64,)))
+
+    # We can reuse everything for cos by shifting by pi/2
+    f = x->non_oscl(x + pi / (2*omega))
+    na = a - pi/(2*omega)
+    nb = b - pi/(2*omega)
+    return fejer_quadrature_cos(f, omega, na, nb; n=n, finite=finite)
+end
+
+function fejer_quadrature_cos(
+    non_oscl::Function, omega::Real, a::Real, b::Real; 
+    n=-1, finite=true)
+    @assert(b > a)
+    @assert(isfinite(omega))
+    @assert(hasmethod(non_oscl, (Float64,)))
+
+    if n==-1
+        if isfinite(a) && isfinite(b)
+            return fejer_quadrature_finite_adaptive_cos(non_oscl, omega, a, b;finite=finite)[1]
+        end
+        
+        if isfinite(a) && b == Inf
+            return fejer_quadrature_semiinf_adaptive_cos(non_oscl, omega, a;finite=finite)
+        end
+
+        if isfinite(b) && a == -Inf
+            f = x->non_oscl(-x)
+            return fejer_quadrature_semiinf_adaptive_cos(f, omega, -b;finite=finite)
+        end
+    end
+    @assert(false, "Not done this bit yet!")
+end
+
+# Assume integrating in [a, inf]
+function fejer_quadrature_semiinf_adaptive_cos(
+    non_oscl::Function, omega::Real, a::Real; 
+    tol=1e-6, maxsegs=1000, finite=true)
+
+    # We break the integrand into intervals and adaptively integrate until we
+    # appear to have converged
+    @assert(omega >= 0)
+    T = 2 * pi / omega
+    segment = T==Inf ? 1 : 2*T
+    sum = 0
+    ll = a
+    ul = a+segment
+    sum += fejer_quadrature_finite_adaptive_cos(
+        non_oscl, omega, ll, ul; tol=tol/5)[1]
+    sw = segment
+    n = 0
+    while true
+        n += 1
+        ll = ul
+        ul = ll + segment
+        int, refinement = fejer_quadrature_finite_adaptive_cos(
+            non_oscl, omega, ll, ul; tol=tol/5)
+        if abs(int / sum) < tol
+            break   # THIS IS A REALLY TERRIBLE CONVERGENCE CRITERIA!
+        end
+        if finite && !isfinite(int)
+            error("Integrand was not finite in [", ll, ", ", ul, "].")
+            break
+        end
+        if refinement > 4
+            segment /= 2
+        end
+        if refinement < 3
+            segment *= 2
+        end
+        sum += int
+        sw += segment
+        if n > maxsegs
+            break
+        end
+    end
+    return sum
+end
+
+function fejer_quadrature_finite_adaptive_cos(
+    non_oscl::Function, omega::Real, a::Real, b::Real; 
+    tol=1e-6, itermax=8, finite=true)
+
+    # x1s are fine, x2 are coarse
+    n = 32+1
+    h1 = (b-a)/(n-1)
+    h2 = 2*h1
+    x1 = collect(range(a, stop=b, length=n))
+    x2 = x1[1:2:end]
+    f1 = non_oscl.(x1)
+    f2 = f1[1:2:end]
+    r2 = fejer_eval_finite_cos(x2, f2, omega, h2)
+    r1 = r2 # Just to get the correct type.
+    iter = 0
+    while true
+        iter += 1
+        r1 = fejer_eval_finite_cos(x1, f1, omega, h1)
+        if !isfinite(r1)
+            break
+        end
+        rerr = abs(r1 - r2) / abs(r1)
+        if rerr*2 < tol
+            break
+        end
+        if iter > itermax
+            break
+        end
+        n = (n-1)*2 + 1
+        h1 = (b-a)/(n-1)
+        h2 = 2*h1
+        x2 = x1
+        if abs(b - a)/abs((b+a)/2) < 1e-10
+            break # We can't reliably generate a range...
+        end
+        x1 = collect(range(a, stop=b, length=n))
+        f2 = f1
+        f1 = zeros(n)
+        f1[1:2:end] = f2
+        f1[2:2:end] = non_oscl.(x1[2:2:end])
+        r2 = r1
+    end
+    return r1, iter
+end
+
+function fejer_eval_finite_cos(
+    xs::Vector{<:Number}, fs::Vector{<:Number}, omega, h)
+
+    @assert(round((xs[end]-xs[1])/h)+1 == length(xs))
+    @assert(length(xs) == length(fs))
+    @assert(length(xs)%2 == 1)
+    @assert(h >= 0)
+
+    oh = omega * h
+    alpha = 1/oh + sin(2*oh)/(2*oh^2) - 2*sin(oh)^2/oh^3
+    beta = 2 * ((1+cos(oh)^2)/oh^2 - sin(2*oh)/oh^3)
+    gamma = 4 * (sin(oh) / oh^3 - cos(oh) / oh^2)
+    c2n = sum(fs[1:2:end] .* cos.(omega .* xs[1:2:end])) - (
+        fs[end]*cos(omega*xs[end]) + fs[1]*cos(omega*xs[1]))/2
+    c2nm1 = sum(fs[2:2:end] .* cos.(omega * xs[2:2:end]))
+
+    res = h * (alpha * (fs[end] * sin(omega * xs[end]) - fs[1] * sin(omega * xs[1]))
+        + beta * c2n + gamma * c2nm1)# + 2 *  omega * h^4 * sp / 45)
+
+    return res
+end
+
+#= Newton-Coats ------------------------------------------------------------=#
+
+function trapezium_quadrature_adaptive(fn::Function, a::Real, b::Real; 
+    tol=1e-6, itermax=10)
+    @assert(a < b)
+    @assert(hasmethod(fn, (Float64,)))
+    # x1s are fine, x2 are coarse
+    n = 32+1
+    h1 = (b-a)/(n-1)
+    h2 = 2*h1
+    x1 = collect(range(a, stop=b, length=n))
+    x2 = x1[1:2:end]
+    f1 = fn.(x1)
+    f2 = f1[1:2:end]
+    r2 = trapezium_eval(x2, f2, h2)
+    r1 = r2 # Just to get the correct type.
+    iter = 0
+    while true
+        iter += 1
+        r1 = trapezium_eval(x1, f1, h1)
+        rerr = abs(r1 - r2) / abs(r1)
+        if rerr*2 < tol
+            break
+        end
+        if iter > itermax
+            break
+        end
+        n = (n-1)*2 + 1
+        h1 = (b-a)/(n-1)
+        h2 = 2*h1
+        x2 = x1
+        x1 = collect(range(a, stop=b, length=n))
+        f2 = f1
+        f1 = zeros(n)
+        f1[1:2:end] = f2
+        f1[2:2:end] = fn.(x1[2:2:end])
+        r2 = r1
+    end
+    return r1
+end
+
+function trapezium_eval(
+    xs::Vector{<:Number}, fs::Vector{<:Number}, h)
+
+    @assert(round((xs[end]-xs[1])/h)+1 == length(xs))
+    @assert(length(xs) == length(fs))
+    @assert(length(xs)%2 == 1)
+    
+    s = 0.
+    for i = 1 : length(xs)-1
+        s += 0.5 * (fs[i] + fs[i+1]) * (xs[i+1] - xs[i])
+    end
+    return s
+end
+
+function simpsons_quadrature_adaptive(fn::Function, a::Real, b::Real; 
+    tol=1e-6, itermax=10)
+    @assert(a < b)
+    @assert(hasmethod(fn, (Float64,)))
+    # x1s are fine, x2 are coarse
+    n = 32+1
+    h1 = (b-a)/(n-1)
+    h2 = 2*h1
+    x1 = collect(range(a, stop=b, length=n))
+    x2 = x1[1:2:end]
+    f1 = fn.(x1)
+    f2 = f1[1:2:end]
+    r2 = simpsons_eval(x2, f2, h2)
+    r1 = r2 # Just to get the correct type.
+    iter = 0
+    while true
+        iter += 1
+        r1 = simpsons_eval(x1, f1, h1)
+        rerr = abs(r1 - r2) / abs(r1)
+        if rerr*2 < tol
+            break
+        end
+        if iter > itermax
+            break
+        end
+        n = (n-1)*2 + 1
+        h1 = (b-a)/(n-1)
+        h2 = 2*h1
+        x2 = x1
+        x1 = collect(range(a, stop=b, length=n))
+        f2 = f1
+        f1 = zeros(n)
+        f1[1:2:end] = f2
+        f1[2:2:end] = fn.(x1[2:2:end])
+        r2 = r1
+    end
+    return r1
+end
+
+function simpsons_eval(
+    xs::Vector{<:Number}, fs::Vector{<:Number}, h)
+
+    @assert(round((xs[end]-xs[1])/h)+1 == length(xs))
+    @assert(length(xs) == length(fs))
+    @assert(all((xs[2:end]-xs[1:end-1]) .- h .< h * 1e-14))
+    @assert((length(xs)-1)%2 == 0)
+    
+    s = 0.
+    for i = 1 : 2 : length(xs)-2
+        s += h * (fs[i] + 4*fs[i+1] + fs[i+2]) / 3
+    end
+    return s
+end
+
+
 #= Laplace transform -------------------------------------------------------=#
 function laplace(
     function_in_t :: Function, s :: Real)
