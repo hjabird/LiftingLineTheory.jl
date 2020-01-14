@@ -12,14 +12,17 @@ __precompile__(true)
 module LiftingLineTheory
 
 export
-	StraightAnalyticWing,
-    DownwashModel,
+	CurvedAnalyticWing,
+	DownwashModel,
+	GuermondUnsteady,
 	HarmonicULLT,
 	HarmonicULLT2,
 	HarmonicULLT3,
-	LAUTAT,
+	HarmonicUpwash2D,
 	LAULLT,
+	LAUTAT,
 	RigidKinematics2D,
+	StraightAnalyticWing,
 	VortexLattice,
 	
 	# Simulation control
@@ -63,25 +66,28 @@ export
 	make_elliptic,
 	make_flat_plate,
 	make_plunge_function,
-	make_pitch_function
+	make_pitch_function,
+	make_sinusoidal_gust_function
 	
-using CVortex
-import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature
-# source files
-include("DownwashEnum.jl")			# An enum. No deps.
-include("SpecialisedFunctions.jl")	# Wagner etc. + Exponential integral
-include("RigidKinematics2D.jl")		# Rigid 2D RigidKinematics2D
-include("ThinFoilGeometry.jl")		# Thin aerofoil representation
-include("Interpolators1D.jl")		# Cubic spline interpolation
-include("TheodorsenSimple.jl")		# Theodorsen + simple evaluation of Thoed.
-include("StraightAnalyticWing.jl")	# Define wing  planform shape
-include("CurvedAnalyticWing.jl")	# Define wing  planform shape with curvature
-include("VortexLattice.jl")			# A vortex lattice
-include("SteadyLLT.jl")				# Prandtl lifting-line theory
-include("HarmonicULLT.jl")			# Harmonic ULLT
-include("HarmonicULLT2.jl")			# Harmonic ULLT
-include("HarmonicULLT3.jl")			# Harmonic ULLT
-include("ParticleGroup2D.jl")		# A vortex particle holder.
-include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
-include("LAULLT.jl")				# Large amplitude lifting line theory
+	using CVortex
+	import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature, QuadGK
+	# source files
+	include("DownwashEnum.jl")			# An enum. No deps.
+	include("SpecialisedFunctions.jl")	# Wagner etc. + Exponential integral
+	include("RigidKinematics2D.jl")		# Rigid 2D RigidKinematics2D
+	include("ThinFoilGeometry.jl")		# Thin aerofoil representation
+	include("Interpolators1D.jl")		# Cubic spline interpolation
+	include("TheodorsenSimple.jl")		# Theodorsen + simple evaluation
+	include("HarmonicUpwash2D.jl")		# Kussner-Schwarz general solution 
+	include("StraightAnalyticWing.jl")	# Define wing planform shape
+	include("CurvedAnalyticWing.jl")	# Define wing planform w/ curvature
+	include("VortexLattice.jl")			# A vortex lattice
+	include("SteadyLLT.jl")				# Prandtl lifting-line theory
+	include("HarmonicULLT.jl")			# Harmonic ULLT
+	include("HarmonicULLT2.jl")			# Harmonic ULLT
+	include("HarmonicULLT3.jl")			# Harmonic ULLT
+	include("GuermondUnsteady.jl")		# HF Harmonic ULLT - Rect. Wing only.
+	include("ParticleGroup2D.jl")		# A vortex particle holder.
+	include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
+	include("LAULLT.jl")				# Large amplitude lifting line theory
 end #END module
