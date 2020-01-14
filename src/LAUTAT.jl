@@ -421,7 +421,12 @@ function lift_and_drag_coefficients(a::LAUTAT)
     return cl, cd
 end
 
-function to_vtk(a::LAUTAT, filename::String; include_foil=true)
+function to_vtk(a::LAUTAT, filename::String; 
+    include_foil=true,
+    streamdir::Vector{<:Real}=[1,0,0],
+    updir::Vector{<:Real}=[0,1,0],
+    translation::Vector{<:Real}=[0,0,0])
+
     np = length(a.te_particles.vorts)
     extrap = include_foil ? 30 : 0
     extrac = include_foil ? extrap-1 : 0
@@ -443,6 +448,8 @@ function to_vtk(a::LAUTAT, filename::String; include_foil=true)
         cells[i + np] = WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_LINE, 
             [i + np, i + np + 1])
     end
+    points = (points[:,1].*streamdir') .+ (points[:,2].*updir')
+    points .+= translation'
     vtkfile = WriteVTK.vtk_grid(filename, points', cells)
     WriteVTK.vtk_point_data(vtkfile, vorts, "Vorticity")
     WriteVTK.vtk_save(vtkfile)
