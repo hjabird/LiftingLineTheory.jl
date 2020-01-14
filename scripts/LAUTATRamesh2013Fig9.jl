@@ -7,7 +7,7 @@ using CVortex
 using PyPlot
 
 let
-    rampfn = x->eldredge_ramp(x, 1, 3, 4, 6,  11, 1, 1)
+    rampfn = x->eldredge_ramp(x, 1, 3, 4, 6, 1, 1; a=11)
     rampfnmax = rampfn(3.5)
     dtstar=0.015
     prob = LAUTAT(;

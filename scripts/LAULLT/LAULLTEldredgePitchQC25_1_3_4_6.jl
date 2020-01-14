@@ -37,7 +37,7 @@ let
 	println("Comparing LAULLT CFD in pitch in "*Base.source_path())
 
     wing = make_rectangular(StraightAnalyticWing, 4, 4)
-    eld_fn = t->eldredge_ramp(t, t1, t2, t3, t4, a, U_inf, chord)
+    eld_fn = t->eldredge_ramp(t, t1, t2, t3, t4, U_inf, chord; a=a)
     eld_max = eld_fn((t2+t3)/2)
     kinematics = make_pitch_function(RigidKinematics2D, -0.25, t->amp * eld_fn(t) / eld_max)
     
