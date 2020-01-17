@@ -481,6 +481,60 @@ function simpsons_eval(
     return s
 end
 
+#= Numerical evaluation of finite part integrals ---------------------------=#
+# Using method from D.H. Padget, The numerical evaluation of hadamard finite
+# part integrals, Numerische mathematik 1981
+
+# Integrate[ f(x) / (x-s)^2, {x, -1, 1} ]
+# Integrating in x = [-1, 1]. Legendre.
+function integrate_finite_part_legendre(
+    f :: Function, fderiv ::Function, s :: Real;
+    n = 50)
+    q0 = log((1-s)/(1+s))
+    q0p = 2 / (s^2 - 1)
+    fs = f(s)
+    fsp = fderiv(s)
+
+    points, weights = FastGaussQuadrature.gausslegendre(n)
+    integrand = x-> (f(x)-fs)/(x-s)^2 - fsp / (x-s)
+    summation = mapreduce(x->x[2] * integrand(x[1]), +, zip(points, weights))
+    integral = summation + q0p*fs +q0*fsp
+    return integral
+end
+
+# Integrate[ f(x) / (sqrt(1-x^2) * (x-s)^2), {x, -1, 1} ]
+# Integrating in x = [-1, 1]. Chebyshev type 1.
+function integrate_finite_part_chebyshev1(
+    f :: Function, fderiv ::Function, s :: Real;
+    n = 50)
+    q0 = 0
+    q0p = 0
+    fs = f(s)
+    fsp = fderiv(s)
+
+    points, weights = FastGaussQuadrature.gausschebyshev(n, 1)
+    integrand = x-> (f(x)-fs)/(x-s)^2 - fsp / (x-s)
+    summation = mapreduce(x->x[2] * integrand(x[1]), +, zip(points, weights))
+    integral = summation + q0p*fs +q0*fsp
+    return integral
+end
+
+# Integrate[ f(x)sqrt(1-x^2) / (x-s)^2, {x, -1, 1} ]
+# Integrating in x = [-1, 1]. Chebyshev type 2.
+function integrate_finite_part_chebyshev2(
+    f :: Function, fderiv ::Function, s :: Real;
+    n = 50)
+    q0 = -pi * s
+    q0p = -pi
+    fs = f(s)
+    fsp = fderiv(s)
+
+    points, weights = FastGaussQuadrature.gausschebyshev(n, 1)
+    integrand = x-> (f(x)-fs)/(x-s)^2 - fsp / (x-s)
+    summation = mapreduce(x->x[2] * integrand(x[1]), +, zip(points, weights))
+    integral = summation + q0p*fs +q0*fsp
+    return integral
+end
 
 #= Laplace transform -------------------------------------------------------=#
 function laplace(
