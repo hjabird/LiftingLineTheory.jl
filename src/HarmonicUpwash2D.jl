@@ -91,10 +91,16 @@ function make_sinusoidal_gust_function(::Type{HarmonicUpwash2D},
     @assert(semichord > 0, "Semichord must be positive")
     @assert(number_of_terms > 0, "Number of terms must be postive integer")
     omega = free_stream_vel * k / semichord
+    #= OLD CODE THAT I BELIEVE TO BE WONG.
     p0_term = -amplitude * SpecialFunctions.besselj(0, k) / free_stream_vel
     pn_terms = map(
         n->-2 * (-im)^n * amplitude * SpecialFunctions.besselj(n, k) / free_stream_vel,
+        1:number_of_terms-1)        =#
+    p0_term = amplitude * SpecialFunctions.besselj(0, k) / free_stream_vel
+    pn_terms = map(
+        n-> (-im)^n * amplitude * SpecialFunctions.besselj(n, k) / free_stream_vel,
         1:number_of_terms-1)
+    
     ret = HarmonicUpwash2D(
         free_stream_vel, 
         omega,
