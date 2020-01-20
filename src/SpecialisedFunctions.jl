@@ -529,7 +529,7 @@ function integrate_finite_part_chebyshev2(
     fs = f(s)
     fsp = fderiv(s)
 
-    points, weights = FastGaussQuadrature.gausschebyshev(n, 1)
+    points, weights = FastGaussQuadrature.gausschebyshev(n, 2)
     integrand = x-> (f(x)-fs)/(x-s)^2 - fsp / (x-s)
     summation = mapreduce(x->x[2] * integrand(x[1]), +, zip(points, weights))
     integral = summation + q0p*fs +q0*fsp
