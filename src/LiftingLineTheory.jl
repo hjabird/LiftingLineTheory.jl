@@ -15,6 +15,7 @@ export
 	CurvedAnalyticWing,
 	DownwashModel,
 	GuermondUnsteady,
+	GuermondUnsteady2,
 	HarmonicULLT,
 	HarmonicULLT2,
 	HarmonicULLT3,
@@ -87,6 +88,7 @@ export
 	include("HarmonicULLT2.jl")			# Harmonic ULLT
 	include("HarmonicULLT3.jl")			# Harmonic ULLT
 	include("GuermondUnsteady.jl")		# HF Harmonic ULLT - Rect. Wing only.
+	include("GuermondUnsteady2.jl")		# HF Harmonic ULLT - Straight wings only.
 	include("ParticleGroup2D.jl")		# A vortex particle holder.
 	include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
 	include("LAULLT.jl")				# Large amplitude lifting line theory
