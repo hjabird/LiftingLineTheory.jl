@@ -137,18 +137,18 @@ function Base.:-(x::HarmonicUpwash2D, y::HarmonicUpwash2D)
         x.p0 - y.p0, pn)
 end
 
-function Base.:*(x::HarmonicUpwash2D, y::Real)
+function Base.:*(x::HarmonicUpwash2D, y::Number)
     pn = zeros(ComplexF64, length(x.pn))
     pn = x.pn .* y
     return HarmonicUpwash2D(x.free_stream_vel, x.omega, x.semichord,
         x.p0 * y, pn)
 end
 
-function Base.:*(y::Real, x::HarmonicUpwash2D)
+function Base.:*(y::Number, x::HarmonicUpwash2D)
     return x*y
 end
 
-function Base.:/(x::HarmonicUpwash2D, y::Real)
+function Base.:/(x::HarmonicUpwash2D, y::Number)
     return x*(1/y)
 end
 
