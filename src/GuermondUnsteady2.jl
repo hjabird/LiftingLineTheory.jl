@@ -141,6 +141,7 @@ function g3d_term(a::GuermondUnsteady2,
 
     y = cos(theta)
     np = 50
+    sinnacosy = sin(n * theta)
 
     # The non-oscillatory term.
     f1 = eta -> sin(n * acos(eta)) / sqrt(1 - eta^2)
@@ -157,7 +158,8 @@ function g3d_term(a::GuermondUnsteady2,
     function inner_integral_fx(eta, v)
         ti1 = sin(n * acos(eta)) / sqrt(1-eta^2)
         ti2 = 1 + v / sqrt(v^2 + (y - eta)^2)
-        return ti1 * ti2
+        ti3 = -2 * sinnacosy / (pi * v)
+        return ti1 * ti2 + ti3
     end
     function inner_integral_fxp(eta, v)
         tia = 1 + v / sqrt(v^2 + (y - eta)^2)
@@ -173,12 +175,12 @@ function g3d_term(a::GuermondUnsteady2,
         ti1 = integrate_finite_part_chebyshev2(
                 x->inner_integral_fx(x, v), 
                 x->inner_integral_fxp(x, v), y; n=np)
-        ti2 = 2 / v # This is the term not in w_0(M), but eq.27
-        return ti1 + ti2
+        return ti1
     end
     tosccl = fejer_quadrature_exp(inner_terms, a.guermond_nu, 
-        -Inf, -1e-8; finite=true)
+        -Inf, -1e-1; finite=true)
     total_term = nonosclterm / (4 * pi) - im * a.guermond_nu * tosccl / (4 * pi)
+    println(im * a.guermond_nu * tosccl / (4 * pi))
     
     chord = a.wing.chord_fn(y * a.wing.semispan)
     uw = make_sinusoidal_gust_function(HarmonicUpwash2D,
