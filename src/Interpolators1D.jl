@@ -1,7 +1,10 @@
 #
-# CubicSpline.jl
+# Interpolator1D.jl
 #
-# Copyright HJA Bird 2019
+# For moments where interpolation is needed, we can interpolate.
+# Linear interpolation and cubic splines implemented.
+#
+# Copyright HJA Bird 2019-2020
 #
 #============================================================================#
 

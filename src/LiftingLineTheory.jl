@@ -71,6 +71,7 @@ export
 	make_sinusoidal_gust_function
 	
 	using CVortex
+	using LinearAlgebra
 	import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature, QuadGK
 	# source files
 	include("DownwashEnum.jl")			# An enum. No deps.
@@ -85,7 +86,7 @@ export
 	include("VortexLattice.jl")			# A vortex lattice
 	include("SteadyLLT.jl")				# Prandtl lifting-line theory
 	include("HarmonicULLT.jl")			# Harmonic ULLT
-	include("HarmonicULLT2.jl")			# Harmonic ULLT
+	include("SclavounosULLT.jl")		# A faithful reproduction of Sclavounos.
 	include("HarmonicULLT3.jl")			# Harmonic ULLT
 	include("GuermondUnsteady.jl")		# HF Harmonic ULLT - Rect. Wing only.
 	include("GuermondUnsteady2.jl")		# HF Harmonic ULLT - Straight wings only.

@@ -1,3 +1,11 @@
+#
+# ThoedorsenSimple.jl
+#
+# An easy use of thoedorsen's method.
+#
+# Copyright HJA Bird 2019-2020
+#
+################################################################################
 
 import SpecialFunctions
 """

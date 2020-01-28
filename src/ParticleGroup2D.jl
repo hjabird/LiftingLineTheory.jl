@@ -1,3 +1,12 @@
+#
+# ParticleGroup2D.jl
+#
+# Represent a group of vortex particles in a way easy to use with CVortex.jl
+#
+# Copyright HJA Bird 2019-2020
+#
+################################################################################
+
 
 mutable struct ParticleGroup2D
     positions :: Matrix{Float32} # An N by 3 Matrix

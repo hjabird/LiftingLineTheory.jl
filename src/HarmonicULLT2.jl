@@ -1,7 +1,15 @@
 #
-# HarmonicULLT.jl
+# HarmonicULLT2.jl
 #
-# Copyright HJA Bird 2019
+# A harmonic ULLT where the principal of downwash decomposition from Guermond
+# and Sellier's 1991 paper has been used, applied to uniform downwash. All 
+# of the integrals  are based upon Bessel/Struve functions.
+#
+# Doesn't work right now!
+#
+# Interface is identical to that in HarmonicULLT.jl
+#
+# Copyright HJA Bird 2019-2020
 #
 #==============================================================================#
 
@@ -86,7 +94,7 @@ function compute_collocation_points!(
     a :: HarmonicULLT2)
 
     nt = a.num_terms
-    @assert(nt > 0, "Number of terms in HarmonicULLT must be more than 0")
+    @assert(nt > 0, "Number of terms in HarmonicULLT2 must be more than 0")
     pos = Vector{Float64}(undef, a.num_terms)
     hpi = pi / 2
     for i = 1 : nt
@@ -144,67 +152,7 @@ function y_to_theta(
     return acos(y / a.wing.semispan)
 end
 
-function k_term1_singularity(
-    a :: HarmonicULLT2,
-    delta_y :: Real) 
-    # Yes
-    @assert(delta_y != 0, "delta_y == 0 leads to NaN (inf) answer")
-    return 1 / delta_y
-end
-
-function k_term1_numerator(
-    a :: HarmonicULLT2,
-    delta_y :: Real)
-    # Yes
-    return exp(- (a.angular_fq / a.free_stream_vel) * abs(delta_y)) / 2
-end
-
-function k_term2(
-    a :: HarmonicULLT2,
-    delta_y :: Real)
-    # Yes
-    coeff = sign(delta_y) / 2
-    nu = a.angular_fq / a.free_stream_vel
-    e1_term = - im * nu * expint(nu * abs(delta_y))
-    return coeff * e1_term
-end
-
-function k_term3(
-    a :: HarmonicULLT2,
-    delta_y :: Real)
-    # Yes
-    coeff = sign(delta_y) / 2
-    nu = a.angular_fq / a.free_stream_vel
-    p = nu * p_eq(a, nu * abs(delta_y))
-
-    return coeff * p
-end
-
-function p_eq(
-    a :: HarmonicULLT2,
-    delta_y :: Real)
-    # Is correct. See notes #7 pg.6 or #1 pg.63 or #1 pg. 76.
-    # Eq. 3.21 in Sclavounos1987.
-    function integrand1(t :: T) where T <: Real
-        val = - delta_y * exp(-delta_y * t) * (asin(1 / t) + sqrt(t^2 - 1) - t)
-        return val / exp(-(t-1))    # Because of the quadrature
-    end
-    function integrand2(t :: T) where T <: Real
-        return exp(-delta_y * t) * (sqrt(1 - t^2) - 1) / t
-    end
-
-    points1, weights1 = FastGaussQuadrature.gausslaguerre(30) # laGUERRE
-    points2, weights2 = FastGaussQuadrature.gausslegendre(20) # leGENDRE
-    pts2 = map(
-        x->linear_remap(x[1], x[2], -1, 1, 0, 1),
-        zip(points2, weights2))
-    points1 .+= 1
-    term1 = -exp(-delta_y) * (pi/2 - 1) - sum(weights1 .* map(integrand1, points1))
-    term2 = sum(last.(pts2) .* map(integrand2, first.(pts2)))
-    return term1 + im * term2
-end
-
-function integrate_gammaprime_k(
+function integrate_gammaprime_k_streamwise(
     a :: HarmonicULLT2,
     y :: Real,
     k :: Integer)
@@ -213,10 +161,7 @@ function integrate_gammaprime_k(
     @assert( abs(y) <= a.wing.semispan )
     
     if( a.downwash_model == unsteady )
-        i1 = integrate_gammaprime_k_term1(a, y, k)  # Don't touch - correct.
-        i2 = integrate_gammaprime_k_term2(a, y, k)  # Don't touch - correct.
-        i3 = integrate_gammaprime_k_term3(a, y, k)  # Don't touch - correct.
-        integral = i1 + i2 + i3
+        integral = integrate_gammaprime_k_streamwise_fil(a, y, k)
     elseif( a.downwash_model == psuedosteady )
         integral = integrate_gammaprime_k_psuedosteady(a, y, k)
     elseif( a.downwash_model == streamwise_filaments )
@@ -227,106 +172,61 @@ function integrate_gammaprime_k(
     return integral
 end
 
-function integrate_gammaprime_k_term1(
+function integrate_gammaprime_k_spanwise(
     a :: HarmonicULLT2,
     y :: Real,
     k :: Integer)
-    # Pretty sure this is right.
-    # Yes
-    theta_singular = y_to_theta(a, y)
+
+    @assert(k >= 0)
+    @assert( abs(y) <= a.wing.semispan )
     
-    # We're using the singularity subtraction method to deal with a CPV problem.
-    singularity_coefficient = 
-        dsintheta_dtheta(a, theta_singular, k) * k_term1_numerator(a, 0)
-    
-    function integrand(theta_0 :: Real)
-        eta = theta_to_y(a, theta_0)
-        singular_part = k_term1_singularity(a, y - eta)
-        nonsingular_K = k_term1_numerator(a, y - eta)
-        gamma_dtheta = dsintheta_dtheta(a, theta_0, k)
-        
-        singular_subtraction = (nonsingular_K  * gamma_dtheta - 
-                                                    singularity_coefficient)
-        return singular_part * singular_subtraction
+    if( a.downwash_model == unsteady )
+        integral = integrate_gammaprime_k_spanwise_fil(a, y, k)
+    elseif( a.downwash_model == psuedosteady )
+        integral = 0
+    elseif( a.downwash_model == streamwise_filaments )
+        integral = 0
+    elseif( a.downwash_model == strip_theory )
+        integral = 0
     end
-    
-    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)
-    pts2 = map(
-        x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),
-        zip(nodes1, weights1))
-    pts1 = map(
-        x->linear_remap(x[1], x[2], -1, 1, 0, theta_singular),
-        zip(nodes1, weights1))
-    integral =
-        sum(last.(pts1) .* map(integrand, first.(pts1))) +
-        sum(last.(pts2) .* map(integrand, first.(pts2))) +
-        singularity_coefficient * 0. # Glauert integral
-    return -integral
+    return integral
 end
 
-#= ORIGINAL: using expint singularity =#
-function integrate_gammaprime_k_term2(
+function integrate_gammaprime_k_streamwise_psuedosteady(
+    a :: HarmonicULLT2, 
+    y :: Real, 
+    k :: Integer)
+
+    theta = y_to_theta(a, y)
+    integral = (2*k + 1) * pi * sin((2*k + 1) * theta) / 
+        (2 * a.wing.semispan * sin(theta))
+    return integral
+end
+
+function integrate_gammaprime_k_streamwise_fil(
     a :: HarmonicULLT2,
     y :: Real,
     k :: Integer)
-    
-    @assert(abs(y) < a.wing.semispan)
-    @assert(k >= 0)
+
     theta_singular = y_to_theta(a, y)
     v = a.angular_fq / a.free_stream_vel
     s = a.wing.semispan
-    
-    integral_coefficient = im * v / 2
-    function nonsingular_integrand(theta_0)
-        return (2*k+1) * cos((2*k+1)*theta_0) / (v * s * sin(theta_0))
+    function non_singular(dy)
+        sgn = dy > 0 ? 1 : -1
+        co = v*dy
+        t1 = v*abs(dy) != 0 ? sgn*co* SpecialFunctions.besselk(1,v*abs(dy)) : 1
+        t2 = 1/2 *co* im * pi * (                                               # Extra sign term here to get it to work...
+            struve_l(-1, v*dy) - SpecialFunctions.besseli(1, v*abs(dy)))
+        return t1 + t2
     end
-    function singular_integrand(theta_0)
-        return v * s * sin(theta_0) *
-            expint(v * s * abs(cos(theta_singular) - cos(theta_0)))
-    end
-    
-    # The singular part (in terms of the singularity subtraction method) of the integral
-    singular_integral = v * (y + s) * expint(v * (y + s)) +
-                        v * (y - s) * expint(v * (s - y)) -
-                        exp(-v * (y + s)) +
-                        exp(-v * (s - y))
-        
-    ssm_variable = nonsingular_integrand(theta_singular)
-    function numerical_integrand(theta_0)
-        singular_var = singular_integrand(theta_0)
-        non_singular_var = nonsingular_integrand(theta_0)
-        singularity_subtraction = non_singular_var - ssm_variable
-        integrand = singular_var * singularity_subtraction
-        return integrand
-    end
-    
-    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)
-    pts2 = map(
-        x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),
-        zip(nodes1, weights1))
-    pts1 = map(
-        x->linear_remap(x[1], x[2], -1, 1, 0, theta_singular),
-        zip(nodes1, weights1))
-    
-    int_lower = sum(last.(pts1) .* map(numerical_integrand, first.(pts1)))
-    int_upper = sum(last.(pts2) .* map(numerical_integrand, first.(pts2)))
-    complete_integral = integral_coefficient * (int_upper - int_lower + ssm_variable * singular_integral)
-    return complete_integral
-end
-
-function integrate_gammaprime_k_term3(
-    a :: HarmonicULLT2,
-    y :: Real,
-    k :: Integer)
-    
-    @assert(k >= 0)
-    @assert(abs(y) < a.wing.semispan)
-
-    # Don't touch - correct.
-    theta_singular = y_to_theta(a, y)
+    ssm_var = non_singular(0)
     function integrand(theta_0)
-        eta = theta_to_y(a, theta_0)
-        return dsintheta_dtheta(a, theta_0, k) * k_term3(a, y - eta)
+        dy = y - theta_to_y(a, theta_0)
+        sgn = dy > 0 ? 1 : -1
+        sing = s * cos((2*k+1)*theta_0) / dy
+        # We remove the singularity here and need to add it back later.
+        ns = non_singular(dy)
+        return sing * (ns - ssm_var)
     end
 
     nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
@@ -339,7 +239,57 @@ function integrate_gammaprime_k_term3(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    return -integral
+    coeff = -(2*k + 1) / (4 * pi * s)
+    ret = coeff * (integral 
+        - ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
+    return ret
+end
+
+function integrate_gammaprime_k_spanwise_fil(
+    a :: HarmonicULLT2,
+    y :: Real,
+    k :: Integer)
+
+    #println("Integrating spanwise!")
+    theta_sing = y_to_theta(a, y) 
+    gamma_local = sin((2 * k + 1) * theta_sing)
+    v = a.angular_fq / a.free_stream_vel
+    s = a.wing.semispan
+
+    # Off the wing tips:
+    function tip_dw(dy)
+        t1 = -im * gamma_local * v / ( 4 * pi )
+        t21 = im * pi * SpecialFunctions.besseli(0, v * abs(dy)) / 2
+        t22 = SpecialFunctions.besselk(0, v * abs(dy))
+        t23 = -pi * im * struve_l(0, v * dy) / 2
+        return t1 * (t21 + t22 + t23)
+    end
+    tips_effect = tip_dw(s - y) + tip_dw(s + y)
+
+    # Over the span:
+    function integrand(y0)
+        gamma_diff = sin((2 * k + 1) * y_to_theta(a, y0)) - gamma_local
+        dy = y - y0
+        co = - im * v / (4*pi)
+        va = v * abs(dy)
+        t1 = 1 / abs(dy)
+        t2 = v/2 * (-pi*SpecialFunctions.besseli(0, va) + 2*im *SpecialFunctions.besselk(0, va))
+        t3 = pi * struve_l(0, va)
+        return gamma_diff * co * (t1 + t2 + t3)
+    end
+
+    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
+    pts2 = map(
+        x->linear_remap(x[1], x[2], -1, 1, y, s),
+        zip(nodes1, weights1))
+    pts1 = map(
+        x->linear_remap(x[1], x[2], -1, 1, -s, y),
+        zip(nodes1, weights1))
+    integral =
+        sum(last.(pts1) .* map(integrand, first.(pts1))) +
+        sum(last.(pts2) .* map(integrand, first.(pts2))) 
+    
+    return - (tips_effect) - integral 
 end
 
 function gamma_terms_matrix(
@@ -374,19 +324,22 @@ function integro_diff_mtrx_coeff(
     a :: HarmonicULLT2,
     y_pos :: Real)
 
-    coeff = d_heave_normalised(a, y_pos) / (2 * pi * a.angular_fq * im)
+    coeff = d_heave_normalised(a, y_pos) / (a.angular_fq * im)
     return coeff
 end
 
 function compute_fourier_terms!(
     a :: HarmonicULLT2 )
 
+    @assert(length(a.collocation_points)>1, "Only one collocation point. "*
+        "Did you call compute_collocation_points!(a::HarmonicULLT2)?")
     gamma_mtrx = gamma_terms_matrix(a)
     integro_diff_mtrx = 
         map(
             in->
                 integro_diff_mtrx_coeff(a, theta_to_y(a, a.collocation_points[in[1]+1])) * 
-                integrate_gammaprime_k(a,  theta_to_y(a, a.collocation_points[in[1]+1]), in[2]),
+                (integrate_gammaprime_k_streamwise(a,  theta_to_y(a, a.collocation_points[in[1]+1]), in[2])
+                + integrate_gammaprime_k_spanwise(a,  theta_to_y(a, a.collocation_points[in[1]+1]), in[2])),
             collect((i, j) for i in 0:a.num_terms-1, j in 0:a.num_terms-1)
         )
     rhs_vec = rhs_vector(a)
@@ -396,31 +349,214 @@ function compute_fourier_terms!(
 end    
 
 function lift_coefficient(
-    a :: HarmonicULLT2,
-    added_mass_a33 :: Real )
+    a :: HarmonicULLT2 )
 
-    @assert((a.pitch_plunge == 3),
-        "HarmonicULLT.pitch_plunge must equal 3 (plunge).")
-    v = a.angular_fq / a.free_stream_vel
-    s = a.wing.semispan
+    @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
+        "HarmonicULLT2.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
 
-    t1 = -4 * pi / area(a.wing)
-
-    function integrand(y::Real)
-        l = a.wing.chord_fn(y) / 2 
-        theo = theodorsen_fn(l * v)
-        correction = (1 - f_eq(a, y))
-        return l * theo * correction
-    end
-    
-    points, weights = FastGaussQuadrature.gausslegendre(40)
-    pts1 = map(
-        x->linear_remap(x[1], x[2], -1, 1, -s, s),
-        zip(points, weights))
-    circ_int = t1 * sum(last.(pts1) .* integrand.(first.(pts1)))
-    added_mass = -im * v * added_mass_a33 / area(a.wing)
-    CL = circ_int + added_mass
+    w_area = area(a.wing)
+    integrand = y->lift_coefficient(a, y) * 
+        a.amplitude_fn(y) * a.wing.chord_fn(y)
+    nodes, weights = FastGaussQuadrature.gausslegendre(70)
+    pts = map(
+        x->linear_remap(x[1], x[2], -1, 1, -a.wing.semispan, a.wing.semispan),
+        zip(nodes, weights))
+    integral = sum(last.(pts) .* map(integrand, first.(pts)))/ w_area
+    CL = integral
     return CL
+end
+
+function lift_coefficient(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    # Notes 5 pg 57
+    if(a.pitch_plunge == 3)
+        associated_cl_fn = associated_chord_cl_heave
+    elseif(a.pitch_plunge == 5)
+        associated_cl_fn = associated_chord_cl_pitch
+    end
+    clA = a.amplitude_fn(y) * associated_cl_fn(a, y) - f_eq(a, y) *
+        associated_chord_cl_heave(a, y)
+    return clA / a.amplitude_fn(y)
+end
+
+function associated_chord_cl_heave(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    # Notes 5 pg 53
+    @assert(abs(y) <= a.wing.semispan)
+    k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    t1 = -2 * pi * theodorsen_fn(k) 
+    t2 = -im * pi * k 
+    return t1 + t2
+end
+
+function associated_chord_cl_pitch(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    # Notes #7 pg 4
+    @assert(abs(y) <= a.wing.semispan)
+    semichord = a.wing.chord_fn(y) / 2 
+    U = a.free_stream_vel
+    omega = a.angular_fq
+    k = omega * a.wing.chord_fn(y) / (2 * U)
+    t1 = pi * semichord
+    t21 = theodorsen_fn(k) * pi
+    t22 = semichord - 2 * U * im  / omega
+    t2 = t21 * t22
+    return t1 + t2
+end
+
+function moment_coefficient(
+    a :: HarmonicULLT2 )
+
+    @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
+        "HarmonicULLT2.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
+
+    w_area = area(a.wing)
+    semispan = a.wing.semispan
+    integrand = y->moment_coefficient(a, y) * 
+        a.amplitude_fn(y) * a.wing.chord_fn(y)^2
+    nodes, weights = FastGaussQuadrature.gausslegendre(70)
+    pts = map(
+        x->linear_remap(x[1], x[2], -1, 1, -semispan, semispan),
+        zip(nodes, weights))
+    integral = sum(last.(pts) .* map(integrand, first.(pts))) / 
+        (w_area^2 / (2*semispan))
+    CM = integral
+    return CM
+end
+
+function moment_coefficient(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    # Notes 6 pg 55
+    if(a.pitch_plunge == 3)
+        associated_cm_fn = associated_chord_cm_heave
+    elseif(a.pitch_plunge == 5)
+        associated_cm_fn = associated_chord_cm_pitch
+    end
+    cmA = a.amplitude_fn(y) * associated_cm_fn(a, y) - f_eq(a, y) *
+        associated_chord_cm_heave(a, y)
+    return cmA / a.amplitude_fn(y)
+end
+
+function associated_chord_cm_heave(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    # Notes #7 pg 4
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
+    k = a.angular_fq * a.wing.chord_fn(y) / (2 * a.free_stream_vel)
+    num = - pi * theodorsen_fn(k)
+    den = 2
+    return num / den
+end
+
+function associated_chord_cm_pitch(
+    a :: HarmonicULLT2,
+    y :: Real)
+    #Notes #7 pg. 4
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
+    chord = a.wing.chord_fn(y)
+    semichord = chord/2
+    omega = a.angular_fq
+    U = a.free_stream_vel
+    k = omega * a.wing.chord_fn(y) / (2 * U)
+    Ck = theodorsen_fn(k)
+    t1 = -pi / 4
+    t21 = im * k * semichord/ 4
+    t22 = Ck * (2 * im * U / omega - semichord)
+    t23 = semichord
+    t2 = t21 + t22 + t23
+    t = t1 * t2
+    return t
+end
+
+function drag_coefficient(
+    a :: HarmonicULLT2)
+
+    @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
+        "HarmonicULLT2.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
+
+    w_area = area(a.wing)
+    integrand = y->drag_coefficient(a, y) * 
+        a.amplitude_fn(y) * a.wing.chord_fn(y)
+    nodes, weights = FastGaussQuadrature.gausslegendre(70)
+    pts = map(
+        x->linear_remap(x[1], x[2], -1, 1, -a.wing.semispan, a.wing.semispan),
+        zip(nodes, weights))
+    integral = sum(last.(pts) .* map(integrand, first.(pts)))/ w_area
+    CD = integral
+    return CD
+end
+
+function drag_coefficient(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
+    # Based on Ramesh 2013
+    cs = 2 * pi * a0_term(a, y)^2
+    cd = -cs
+    if a.pitch_plunge == 5
+        cdp = lift_coefficient(a, y) * a.amplitude_fn(y)
+        cd += cdp
+    end
+    return cd / a.amplitude_fn(y)
+end
+
+function a0_term(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.angular_fq > 0)
+
+    if(a.pitch_plunge == 3)
+        associated_a0_fn = associated_a0_term_heave
+    elseif(a.pitch_plunge == 5)
+        associated_a0_fn = associated_a0_term_pitch
+    end
+    a0_term = a.amplitude_fn(y) * associated_a0_fn(a, y) - f_eq(a, y) *
+        associated_a0_term_heave(a, y)
+    return a0_term
+end
+
+function associated_a0_term_pitch(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    chord = a.wing.chord_fn(y)
+    semichord = chord/2
+    omega = a.angular_fq
+    U = a.free_stream_vel
+    k = omega * a.wing.chord_fn(y) / (2 * U)
+    Ck = theodorsen_fn(k)
+    t1 = Ck * (1 - im * omega * chord / (4 * U))
+    t2 = - im * omega * chord / (4 * U)
+    return t1 + t2
+end
+
+function associated_a0_term_heave(
+    a :: HarmonicULLT2,
+    y :: Real)
+
+    chord = a.wing.chord_fn(y)
+    semichord = chord/2
+    omega = a.angular_fq
+    U = a.free_stream_vel
+    k = omega * a.wing.chord_fn(y) / (2 * U)
+    Ck = theodorsen_fn(k)
+    t1 = - Ck * im * omega / U
+    return t1
 end
 
 function f_eq(
@@ -458,5 +594,5 @@ function bound_vorticity(
     return sum
 end
 
-# END HarmonicULLT.jl
+# END HarmonicULLT2.jl
 #============================================================================#

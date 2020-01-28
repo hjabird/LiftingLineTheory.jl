@@ -1,6 +1,9 @@
 #
 # DownwashEnum.jl
 #
+# An enumerator to represent the different downwash models for 
+# HarmonicULLT.jl
+#
 # Copyright HJA Bird 2019
 #
 #==============================================================================#

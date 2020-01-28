@@ -1,4 +1,28 @@
-using LinearAlgebra
+#
+# GuermondUnsteady2.jl
+#
+# A indirect method of solving Guermond & Sellier's 1991 ULLT similar to 
+# Prandtl's method (insofar that it matches a fourier series in the inner and
+# outer solution.)
+#
+# The Kussner-Schwarz general solution is used to obtain bound vorticity, 
+# pressure distributions, lift and moments from an upwash distribution. It can
+# therefore be used to solve operator K_0. 
+#
+# Use:
+# wing = make_rectangular(StraightAnalyticWing, 4, 4) #AR=4, span=4
+# prob = GuermondUnsteady2(1, wing) # omega = 1
+# compute_collocation_points!(prob)
+# compute_fourier_terms!(prob)
+# Ys = collect(-1.99:0.01:1.99)
+# bvs = map(y->bound_vorticity(prob, y), Ys) # Returns complex!
+# cls = map(y->bound_vorticity(prob, y), Ys) # Returns complex!
+# plot(Ys, abs.(bvs), label="Abs(Bound vorticity)")
+# plot(Ys, abs.(bvs), label="Abs(2D lift coeff)")
+#
+# Copyright HJA Bird 2020
+#
+#==============================================================================#
 
 mutable struct GuermondUnsteady2
     angular_fq :: Real              # in rad / s
@@ -10,12 +34,12 @@ mutable struct GuermondUnsteady2
 
     chord_len_scale :: Float64
     span_len_scale :: Float64
-    guermond_k :: Float64
+    guermond_k :: Float64       # This is uniform over the wing!
     guermond_nu :: Float64
 
     num_terms :: Int64
-    fourier_terms :: Vector{ComplexF64} # G distribution.
-    collocation_points :: Vector{Float64} # Collocation points in [0, pi]
+    fourier_terms :: Vector{ComplexF64}     # G distribution.
+    collocation_points :: Vector{Float64}   # Collocation points in [0, pi]
 
     function GuermondUnsteady2(
         angular_fq::Real, wing::StraightAnalyticWing;
@@ -41,6 +65,7 @@ mutable struct GuermondUnsteady2
     end
 end
 
+# Mappings from Global to normalised coordinates
 function Y_to_y(a::GuermondUnsteady2, Y::Real)
     return Y / a.wing.semispan
 end
@@ -57,6 +82,7 @@ function y_to_Y(a::GuermondUnsteady2, y::Vector{<:Real})
     return y .* a.wing.semispan
 end
 
+# Generate collocation points.
 function compute_collocation_points!(
     a :: GuermondUnsteady2) :: Nothing
 
@@ -65,33 +91,35 @@ function compute_collocation_points!(
     pos = Vector{Float64}(undef, a.num_terms)
     hpi = pi / 2
     for i = 1 : nt
-        pos[i] = (pi * i - hpi) / (2 * nt)
+        pos[i] = pi / (2 * i)
     end
     a.collocation_points = pos
     return
 end
 
+# Solve the overall problem using linear algebra.
 function compute_fourier_terms!(
-    a :: GuermondUnsteady2) :: Nothing
+    a :: GuermondUnsteady2)
 
     terms2d = zeros(ComplexF64, a.num_terms)
     lhs_terms = zeros(ComplexF64, a.num_terms, a.num_terms)
     terms3d = zeros(ComplexF64, a.num_terms, a.num_terms)
     
     terms2d = g2d(a)
-    terms3d = g3d(a)
+    #terms3d = g3d(a)
     lhs_terms = create_lhs_terms(a)
 
     # I think that should be + below here but - gives more expected result.
-    sol_mtrx = lhs_terms .+ terms3d ./ aspect_ratio(a.wing)
+    sol_mtrx = lhs_terms# .+ terms3d ./ aspect_ratio(a.wing)
     display(sol_mtrx)
+    display(abs.(sol_mtrx))
     display(cond(sol_mtrx))
     g_terms = sol_mtrx \ terms2d
-    # g_terms = (lhs_terms) \ terms2d # JUST 2D terms...
     a.fourier_terms = g_terms
-    return
+    return sol_mtrx
 end
 
+# The G values for the 2D problem.
 function g2d(a :: GuermondUnsteady2) :: Vector{ComplexF64}
     ys = cos.(a.collocation_points)
     Ys = a.wing.semispan .* ys
@@ -116,26 +144,29 @@ function g2d(a :: GuermondUnsteady2) :: Vector{ComplexF64}
     return gs
 end
 
+# The matrix representing the sin(j * acos(theta_i)).
 function create_lhs_terms(a :: GuermondUnsteady2) :: Matrix{ComplexF64}
     t = zeros(ComplexF64, a.num_terms, a.num_terms)
     for i = 1 : a.num_terms
         for j = 1 : a.num_terms
-            t[i, j] = sin((2*j-1) * a.collocation_points[i])
+            t[i, j] = sin((j) * a.collocation_points[i])
         end
     end
     return t
 end
 
+# Compute integrals of the K_1 operator applied to the sin distribution.
 function g3d(a::GuermondUnsteady2) :: Matrix{ComplexF64}
     t = zeros(ComplexF64, a.num_terms, a.num_terms)
     for i = 1 : a.num_terms
         for j = 1 : a.num_terms
-            t[i, j] = g3d_term(a, 2*j-1, a.collocation_points[i])
+            t[i, j] = g3d_term(a, j, a.collocation_points[i])
         end
     end
     return t
 end
 
+# Actually calculate the g3d integral.
 function g3d_term(a::GuermondUnsteady2, 
     n :: Integer, theta :: Real) :: ComplexF64
 
@@ -178,13 +209,15 @@ function g3d_term(a::GuermondUnsteady2,
         return ti1
     end
     tosccl = fejer_quadrature_exp(inner_terms, a.guermond_nu, 
-        -Inf, -1e-1; finite=true)
+        -Inf, -1e-4; finite=true)
     total_term = nonosclterm / (4 * pi) - im * a.guermond_nu * tosccl / (4 * pi)
     println(im * a.guermond_nu * tosccl / (4 * pi))
     
     chord = a.wing.chord_fn(y * a.wing.semispan)
+    omega = a.angular_fq
+    U = a.free_stream_vel
     uw = make_sinusoidal_gust_function(HarmonicUpwash2D,
-        total_term, a.guermond_k / 2; free_stream_vel= a.free_stream_vel, 
+        total_term, omega * chord / (2*U); free_stream_vel= a.free_stream_vel, 
         semichord= chord / 2 )
     #uws = make_plunge_function(HarmonicUpwash2D, pd_coeff / a.angular_fq, k;
     #    free_stream_vel = a.free_stream_vel, semichord=chord/2)

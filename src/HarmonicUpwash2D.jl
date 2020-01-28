@@ -8,7 +8,19 @@
 # v_0 = -U (P_0 + 2 sum_1^N P_n cos(n theta)), where the aerofoil is in 
 # x = [-l,l] = [ l cos(pi), l cos(0)].
 #
-# Copyright HJA Bird 2019
+# Use:
+#   amp = 0.1
+#   k = 1.5
+#   upwash = make_plunge_function(HarmonicUpwash2D, amp, k) # Make your upwash.
+#   # And easily get the things you wanted to know!
+#   lift_coefficient(upwash)
+#   moment_coefficient(upwash)
+#   bound_vorticity(upwash)
+#   upwash2 = make_sinusoidal_gust_function(HarmonicUpwash2D, amp, k) # Another
+#   # We can also do arithmatic since everything is linear.
+#   mixed_upwash = upwash + upwash2
+#
+# Copyright HJA Bird 2019 - 2020
 #
 #==============================================================================#
 

@@ -1,11 +1,31 @@
 #
 # HarmonicULLT.jl
 #
-# Copyright HJA Bird 2019
+# A Prandtl like solution to unsteady lifting-line problems that assumes 
+# uniform downwash over the wing.
+#
+# Several methods can be used according to choice of downwash model.
+# downwash_model=
+#   strip_theory: the 3D correction is ignored.
+#   psuedosteady: the 3D correction assumes psuedosteady, like Prandtl.
+#   streamwise_filaments: the 3D correction only include the streamwise 
+#       vorticity (it oscillates!), but not the wake's spansiwse vorticity.
+#   unsteady: the 3D correction includes all elements of the wake's vorticity
+#       using Sclavounos' kernel (but not identical method).
+#
+# Use:
+#   wing = make_elliptic(StraightAnalyticWing, 4, 4)
+#   prob = HarmonicULLT(1, wing; downwash_model=psuedosteady)
+#   compute_collocation_points!(prob)
+#   compute_fourier_terms!(prob)
+#   lift_coefficient(prob)
+#   moment_coefficient(prob)
+#   bound_vorticity(prob, 0.1) # at y is 0.1
+#   lift_coefficient(prob, 0.1) # at y is 0.1
+#
+# Copyright HJA Bird 2019-2020
 #
 #==============================================================================#
-
-using PyPlot
 
 mutable struct HarmonicULLT
     angular_fq :: Real              # in rad / s
@@ -41,6 +61,7 @@ mutable struct HarmonicULLT
     end
 end
 
+# 2D bound vorticity due to heave (include amplitude, chord, etc.)
 function d_heave(
     a :: HarmonicULLT,
     y :: Real)
@@ -55,6 +76,7 @@ function d_heave(
     return num / den
 end
 
+# 2D bound vorticity for a unit heave motion (include chord)
 function d_heave_normalised(
     a :: HarmonicULLT,
     y :: Real)
@@ -68,6 +90,7 @@ function d_heave_normalised(
     return num / den
 end
 
+# 2D bound vorticity due to pitch (include amplitude, chord, etc.)
 function d_pitch(
     a :: HarmonicULLT,
     y :: Real)
@@ -84,6 +107,7 @@ function d_pitch(
     return num / den
 end
 
+# Compute collocation points according to a method that produces good results.
 function compute_collocation_points!(
     a :: HarmonicULLT)
 
@@ -98,6 +122,7 @@ function compute_collocation_points!(
     return
 end
 
+# Coordinate transforms and derivatives ========================================
 function theta_to_y(
     a :: HarmonicULLT,
     theta :: Real)
@@ -146,6 +171,7 @@ function y_to_theta(
     return acos(y / a.wing.semispan)
 end
 
+# Compute the integrals for Sclavounos' K ======================================
 function k_term1_singularity(
     a :: HarmonicULLT,
     delta_y :: Real) 
@@ -230,29 +256,6 @@ function p_eq(
     return term1 + im * term2
 end
 =#
-
-function integrate_gammaprime_k(
-    a :: HarmonicULLT,
-    y :: Real,
-    k :: Integer)
-
-    @assert(k >= 0)
-    @assert( abs(y) <= a.wing.semispan )
-    
-    if( a.downwash_model == unsteady )
-        i1 = integrate_gammaprime_k_term1(a, y, k)  # Don't touch - correct.
-        i2 = integrate_gammaprime_k_term2(a, y, k)  # Don't touch - correct.
-        i3 = integrate_gammaprime_k_term3(a, y, k)  # Don't touch - correct.
-        integral = i1 + i2 + i3
-    elseif( a.downwash_model == psuedosteady )
-        integral = integrate_gammaprime_k_psuedosteady(a, y, k)
-    elseif( a.downwash_model == streamwise_filaments )
-        integral = integrate_gammaprime_k_streamwise_fil(a, y, k)
-    elseif( a.downwash_model == strip_theory )
-        integral = 0
-    end
-    return integral
-end
 
 function integrate_gammaprime_k_term1(
     a :: HarmonicULLT,
@@ -422,6 +425,7 @@ function integrate_gammaprime_k_term3(
     return -integral
 end
 
+# 3D integral for psuedo-steady problem ========================================
 function integrate_gammaprime_k_psuedosteady(
     a :: HarmonicULLT, 
     y :: Real, 
@@ -433,6 +437,7 @@ function integrate_gammaprime_k_psuedosteady(
     return integral
 end
 
+# 3D integral for oscillating streamwise filaments =============================
 function integrate_gammaprime_k_streamwise_fil(
     a :: HarmonicULLT,
     y :: Real,
@@ -481,6 +486,32 @@ function integrate_gammaprime_k_streamwise_fil_subint(
     return integral
 end
 
+# The shared part of the solution ==============================================
+# 3D integral method selection.
+function integrate_gammaprime_k(
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
+
+    @assert(k >= 0)
+    @assert( abs(y) <= a.wing.semispan )
+    
+    if( a.downwash_model == unsteady )
+        i1 = integrate_gammaprime_k_term1(a, y, k)  # Don't touch - correct.
+        i2 = integrate_gammaprime_k_term2(a, y, k)  # Don't touch - correct.
+        i3 = integrate_gammaprime_k_term3(a, y, k)  # Don't touch - correct.
+        integral = i1 + i2 + i3
+    elseif( a.downwash_model == psuedosteady )
+        integral = integrate_gammaprime_k_psuedosteady(a, y, k)
+    elseif( a.downwash_model == streamwise_filaments )
+        integral = integrate_gammaprime_k_streamwise_fil(a, y, k)
+    elseif( a.downwash_model == strip_theory )
+        integral = 0
+    end
+    return integral
+end
+
+# the Gamma = sin(j * acos(y_i)) matrix
 function gamma_terms_matrix(
     a :: HarmonicULLT )
     idxs = collect(1:a.num_terms)
@@ -491,6 +522,7 @@ function gamma_terms_matrix(
     return mtrx
 end
 
+# 2D contributions
 function rhs_vector(
     a :: HarmonicULLT )
 
@@ -517,6 +549,7 @@ function integro_diff_mtrx_coeff(
     return coeff
 end
 
+# Solve!
 function compute_fourier_terms!(
     a :: HarmonicULLT )
 
@@ -536,6 +569,7 @@ function compute_fourier_terms!(
     return
 end    
 
+# Post-processing ==============================================================
 function lift_coefficient(
     a :: HarmonicULLT )
 
@@ -701,6 +735,8 @@ function drag_coefficient(
     return cd / a.amplitude_fn(y)
 end
 
+# We can in theory extract the a0 term from the theodorsen and see if we violate
+# Ramesh et al.'s LESP criterion (although we can't shed LEVs).
 function a0_term(
     a :: HarmonicULLT,
     y :: Real)
@@ -747,6 +783,7 @@ function associated_a0_term_heave(
     return t1
 end
 
+# The matching function F that corrects for 3D effects.
 function f_eq(
     a :: HarmonicULLT,
     y :: Real)

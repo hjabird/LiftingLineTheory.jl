@@ -1,12 +1,28 @@
 #
 # GuermondUnsteady.jl
 #
-# Rectangular wings only for now!
+# A direct method of sulution for Guermond and Sellier's 1991 ULLT applied
+# to a rectangular wing.
 #
-# Copyright HJA Bird 2019
+# The Kussner-Schwarz general solution is used to obtain bound vorticity, 
+# pressure distributions, lift and moments from an upwash distribution. It can
+# therefore be used to solve operator K_0. 
+#
+# Use:
+# wing = make_rectangular(StraightAnalyticWing, 4, 4) #AR=4, span=4
+# prob = GuermondUnsteady(1, wing) # omega = 1
+# Ys = collect(-1.99:0.01:1.99)
+# # There is no solving step involved in this method. 
+# bvs = map(y->bound_vorticity(prob, y), Ys) # Returns complex!
+# cls = map(y->bound_vorticity(prob, y), Ys) # Returns complex!
+# plot(Ys, abs.(bvs), label="Abs(Bound vorticity)")
+# plot(Ys, abs.(bvs), label="Abs(2D lift coeff)")
+#
+# Copyright HJA Bird 2019-2020
 #
 #==============================================================================#
 
+# Object to represent the problem.
 mutable struct GuermondUnsteady
     angular_fq :: Real              # in rad / s
     free_stream_vel :: Real
@@ -43,6 +59,7 @@ mutable struct GuermondUnsteady
     end
 end
 
+# Convertions between coordinate systems. 
 function Y_to_y(a::GuermondUnsteady, Y::Real)
     return Y / a.wing.semispan
 end
@@ -59,6 +76,8 @@ function y_to_Y(a::GuermondUnsteady, y::Vector{<:Real})
     return y .* a.wing.semispan
 end
 
+# A method to obtain the upwash distibution either in 0th order (2D) or 1st 
+# order (3D). This can then be used to obtain bound vorticity, lift ect.
 function upwash_distribution(a::GuermondUnsteady, Y::Real; order::Int=1)
     #= The upwash distribution is a combination of the 2D upwash and, if
     order = 1, the 3D correction. Input are given with respect to unscaled
@@ -80,7 +99,7 @@ function upwash_distribution(a::GuermondUnsteady, Y::Real; order::Int=1)
         uw = make_pitch_function(HarmonicUpwash2D, amp, k;
             free_stream_vel = a.free_stream_vel, semichord=chord/2)
     end
-    # 1st order: 3D - the more complicated bit. 
+    # 1st order: we need to add the 3D corrections to the 2D effects.
     if order > 0 # or == 1
         ar = aspect_ratio(a.wing)
         pd_coeff = operator_K1_excl_exp_term(a, Y)
@@ -94,6 +113,8 @@ function upwash_distribution(a::GuermondUnsteady, Y::Real; order::Int=1)
 end
 
 # Currently assumes rectangular wing!
+# Evaluate the operator K1 on the 2D upwash distribution at a point Y on the 
+# wing. Returns only the coefficient to the exp(i k x) term.
 function operator_K1_excl_exp_term(a::GuermondUnsteady, Y::Real)
     y = Y_to_y(a, Y)
     @assert(abs(y) < 1)
@@ -112,15 +133,6 @@ function operator_K1_excl_exp_term(a::GuermondUnsteady, Y::Real)
     t221 = - im * nu / 2
     # t22 requires numerical integration
     function integrand(v::Real)
-        #tk1 = 1 / v
-        #tk21 = sqrt(v^2 + (y-1)^2) / (y-1)
-        #tk22 = -sqrt(v^2 + (y+1)^2) / (y+1)
-        #tk23 = 2
-        #tk24 = 2 * v / (y^2 - 1)
-        #tk0 = tk1 * (tk21 + tk22 + tk23 + tk24)
-        #Float64(tk0)
-        #return tk0
-        # *exp(im * nu * v) oscl part in quadrature
         ti21 = sqrt(1/v^2 + 1/(y-1)^2)
         ti22 = sqrt(1/v^2 + 1/(y+1)^2)
         ti23 = 2 / v
@@ -130,13 +142,14 @@ function operator_K1_excl_exp_term(a::GuermondUnsteady, Y::Real)
     t222 = fejer_quadrature_exp(integrand, nu, -Inf, -1e-8; finite=true)
     @assert(isfinite(t222), "Term 3 (the integral) isn't finite!")
     constpart = t1 * (t21 + t221 * t222)
-    #println("At k = ", k, ": t1 = ", t1*t21,", t2 = ", abs(t1 * t221 * t222))
 
     # The sinusoidal inner solution downwash's coefficient
     coeff = G * constpart
     return coeff
 end
 
+# Returns the bound vorticity about the wing in 2D (order = 0) or with 
+# 3D corrections (order = 1)
 function bound_vorticity(a::GuermondUnsteady, Y::Real; order::Int=1)
     @assert(abs(Y) < a.wing.semispan)
     @assert(order >= 0, "Positive order required")
@@ -147,6 +160,7 @@ function bound_vorticity(a::GuermondUnsteady, Y::Real; order::Int=1)
     return bv
 end
 
+# Returns the lift coefficient.
 function lift_coefficient(a::GuermondUnsteady, Y::Real; order=1)
     uw = upwash_distribution(a, Y; order=order)
     cL = lift_coefficient(uw)

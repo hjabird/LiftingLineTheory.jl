@@ -1,7 +1,9 @@
 #
 # SpecialisedFunctions.jl
 #
-# Copyright HJA Bird 2019
+# The dirty mathematical underbelly pinning this whole mess together.
+#
+# Copyright HJA Bird 2019-2020
 #
 #============================================================================#
 
@@ -104,6 +106,7 @@ function linear_remap(  # GOOD.
     return pout, wout
 end
 
+# Remap to remove weak singularities.
 function telles_quadratic_remap(
     pointin :: Number,   weightin :: Number,
     lim_a :: Number,     lim_b :: Number,
@@ -135,6 +138,7 @@ end
 
 
 #= Double exponential remaps for oscillatory integrands --------------------=#
+# Sad thing is, it doesn't work.
 
 # The Phi function
 function de_remap_semi_inf_osc_rmp_dn(t::Float64, alpha, beta)
@@ -213,17 +217,18 @@ function de_remap_semi_inf_osc_int_sin(
     return int
 end
 
-#= Fejer Quadrature --------------------------------------------------------=#
+#= Filon Quadrature --------------------------------------------------------=#
+# Quadrature for oscillatory problems.
 
 # For functions of the form integrate( f(x) * exp(i omega x), x, a, b)
-function fejer_quadrature_exp(
+function filon_quadrature_exp(
     non_oscl::Function, omega::Real, a::Real, b::Real; n=-1, finite=true)
-    realpart = fejer_quadrature_cos(non_oscl, omega, a, b; n=n, finite=finite)
-    imagpart = fejer_quadrature_sin(non_oscl, omega, a, b; n=n, finite=finite)
+    realpart = filon_quadrature_cos(non_oscl, omega, a, b; n=n, finite=finite)
+    imagpart = filon_quadrature_sin(non_oscl, omega, a, b; n=n, finite=finite)
     return realpart + im * imagpart
 end
 
-function fejer_quadrature_sin(
+function filon_quadrature_sin(
     non_oscl::Function, omega::Real, a::Real, b::Real; n=-1, finite=true)
     @assert(b > a)
     @assert(isfinite(omega))
@@ -233,10 +238,10 @@ function fejer_quadrature_sin(
     f = x->non_oscl(x + pi / (2*omega))
     na = a - pi/(2*omega)
     nb = b - pi/(2*omega)
-    return fejer_quadrature_cos(f, omega, na, nb; n=n, finite=finite)
+    return filon_quadrature_cos(f, omega, na, nb; n=n, finite=finite)
 end
 
-function fejer_quadrature_cos(
+function filon_quadrature_cos(
     non_oscl::Function, omega::Real, a::Real, b::Real; 
     n=-1, finite=true)
     @assert(b > a)
@@ -245,23 +250,23 @@ function fejer_quadrature_cos(
 
     if n==-1
         if isfinite(a) && isfinite(b)
-            return fejer_quadrature_finite_adaptive_cos(non_oscl, omega, a, b;finite=finite)[1]
+            return filon_quadrature_finite_adaptive_cos(non_oscl, omega, a, b;finite=finite)[1]
         end
         
         if isfinite(a) && b == Inf
-            return fejer_quadrature_semiinf_adaptive_cos(non_oscl, omega, a;finite=finite)
+            return filon_quadrature_semiinf_adaptive_cos(non_oscl, omega, a;finite=finite)
         end
 
         if isfinite(b) && a == -Inf
             f = x->non_oscl(-x)
-            return fejer_quadrature_semiinf_adaptive_cos(f, omega, -b;finite=finite)
+            return filon_quadrature_semiinf_adaptive_cos(f, omega, -b;finite=finite)
         end
     end
     @assert(false, "Not done this bit yet!")
 end
 
 # Assume integrating in [a, inf]
-function fejer_quadrature_semiinf_adaptive_cos(
+function filon_quadrature_semiinf_adaptive_cos(
     non_oscl::Function, omega::Real, a::Real; 
     tol=1e-6, maxsegs=1000, finite=true)
 
@@ -273,7 +278,7 @@ function fejer_quadrature_semiinf_adaptive_cos(
     sum = 0
     ll = a
     ul = a+segment
-    sum += fejer_quadrature_finite_adaptive_cos(
+    sum += filon_quadrature_finite_adaptive_cos(
         non_oscl, omega, ll, ul; tol=tol/5)[1]
     sw = segment
     n = 0
@@ -281,7 +286,7 @@ function fejer_quadrature_semiinf_adaptive_cos(
         n += 1
         ll = ul
         ul = ll + segment
-        int, refinement = fejer_quadrature_finite_adaptive_cos(
+        int, refinement = filon_quadrature_finite_adaptive_cos(
             non_oscl, omega, ll, ul; tol=tol/5)
         if abs(int / sum) < tol
             break   # THIS IS A REALLY TERRIBLE CONVERGENCE CRITERIA!
@@ -305,7 +310,7 @@ function fejer_quadrature_semiinf_adaptive_cos(
     return sum
 end
 
-function fejer_quadrature_finite_adaptive_cos(
+function filon_quadrature_finite_adaptive_cos(
     non_oscl::Function, omega::Real, a::Real, b::Real; 
     tol=1e-6, itermax=8, finite=true)
 
@@ -317,12 +322,12 @@ function fejer_quadrature_finite_adaptive_cos(
     x2 = x1[1:2:end]
     f1 = non_oscl.(x1)
     f2 = f1[1:2:end]
-    r2 = fejer_eval_finite_cos(x2, f2, omega, h2)
+    r2 = filon_eval_finite_cos(x2, f2, omega, h2)
     r1 = r2 # Just to get the correct type.
     iter = 0
     while true
         iter += 1
-        r1 = fejer_eval_finite_cos(x1, f1, omega, h1)
+        r1 = filon_eval_finite_cos(x1, f1, omega, h1)
         if !isfinite(r1)
             break
         end
@@ -350,7 +355,7 @@ function fejer_quadrature_finite_adaptive_cos(
     return r1, iter
 end
 
-function fejer_eval_finite_cos(
+function filon_eval_finite_cos(
     xs::Vector{<:Number}, fs::Vector{<:Number}, omega, h)
 
     @assert(round((xs[end]-xs[1])/h)+1 == length(xs))
@@ -373,6 +378,8 @@ function fejer_eval_finite_cos(
 end
 
 #= Newton-Coats ------------------------------------------------------------=#
+# It might not be convergent, (see Golub or Trevethan or something),
+# but it does work.
 
 function trapezium_quadrature_adaptive(fn::Function, a::Real, b::Real; 
     tol=1e-6, itermax=10)

@@ -3,7 +3,21 @@
 #
 # Control vertical displacement and pitching about a point.
 #
-# Copyright HJAB 2019
+# Example:
+#   # Using automatic differentiation:
+#   zfn = t->t * sin(10*t)
+#   kinem = make_plunge_function(RigidKinematics2D, zfn)
+#   # Or doing it yourself:
+#   zfnderiv = t->sin(10*t) + 10 * t * cos(10 * t)
+#   kinem = make_plunge_function(RigidKinematics2D, zfn, xfnderiv)
+#   # Output to csv...
+#   header = csv_titles(kinem)
+#   a_row = csv_row(kinem, 0.1)
+#   many_rows = csv_row(kinem, collect(0.01:0.01:10)) # For t = (0, 10]s
+#   # Or load kinematics from a matrix:
+#   kinem = from_matrix(RigidKinematics2D, source_matrix)
+#
+# Copyright HJAB 2019-2020
 #
 ################################################################################
 

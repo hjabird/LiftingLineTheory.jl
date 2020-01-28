@@ -1,7 +1,9 @@
 #
 # StraightAnalyticWing.jl
 #
-# Copyright HJA Bird 2019
+# Generate representation of straight wings quickly and easily.
+#
+# Copyright HJA Bird 2019-2020
 #==============================================================================#
 
 mutable struct StraightAnalyticWing
