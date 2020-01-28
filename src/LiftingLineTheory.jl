@@ -18,12 +18,12 @@ export
 	GuermondUnsteady2,
 	HarmonicULLT,
 	HarmonicULLT2,
-	HarmonicULLT3,
 	HarmonicUpwash2D,
 	LAULLT,
 	LAUTAT,
 	RigidKinematics2D,
 	StraightAnalyticWing,
+	SclavounosULLT,
 	VortexLattice,
 	
 	# Simulation control
@@ -86,8 +86,8 @@ export
 	include("VortexLattice.jl")			# A vortex lattice
 	include("SteadyLLT.jl")				# Prandtl lifting-line theory
 	include("HarmonicULLT.jl")			# Harmonic ULLT
+	include("HarmonicULLT2.jl")			# Harmonic ULLT
 	include("SclavounosULLT.jl")		# A faithful reproduction of Sclavounos.
-	include("HarmonicULLT3.jl")			# Harmonic ULLT
 	include("GuermondUnsteady.jl")		# HF Harmonic ULLT - Rect. Wing only.
 	include("GuermondUnsteady2.jl")		# HF Harmonic ULLT - Straight wings only.
 	include("ParticleGroup2D.jl")		# A vortex particle holder.
