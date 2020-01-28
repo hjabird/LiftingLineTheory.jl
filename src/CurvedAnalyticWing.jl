@@ -1,6 +1,8 @@
 #
 # CurvedAnalyticWing.jl
 #
+# Not currently in use by anything.
+#
 # Copyright HJA Bird 2019
 #==============================================================================#
 
@@ -152,7 +154,7 @@ end
 
 function radius_of_curvature(
     a :: CurvedAnalyticWing,
-    y :: Real)
+    y :: Array{<:Real})
     return map(x->radius_of_curvature(a, x), y)
 end
 
