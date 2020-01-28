@@ -521,6 +521,11 @@ end
 
 # Integrate[ f(x)sqrt(1-x^2) / (x-s)^2, {x, -1, 1} ]
 # Integrating in x = [-1, 1]. Chebyshev type 2.
+#
+# TESTING:
+# f(x) = 1, s=-0.2 -> int = -3.14159 - 1.11022*10^-16 I
+# f(x) = x, s=0.4 -> int = -2.51327 + 0. I
+# f(x) = x^2, s=0.3 -> int = 0.722566 + 0. I
 function integrate_finite_part_chebyshev2(
     f :: Function, fderiv ::Function, s :: Real;
     n = 50)
