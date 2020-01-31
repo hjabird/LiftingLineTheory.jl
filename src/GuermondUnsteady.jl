@@ -14,9 +14,9 @@
 # Ys = collect(-1.99:0.01:1.99)
 # # There is no solving step involved in this method. 
 # bvs = map(y->bound_vorticity(prob, y), Ys) # Returns complex!
-# cls = map(y->bound_vorticity(prob, y), Ys) # Returns complex!
+# cls = map(y->lift_coefficient(prob, y), Ys) # Returns complex!
 # plot(Ys, abs.(bvs), label="Abs(Bound vorticity)")
-# plot(Ys, abs.(bvs), label="Abs(2D lift coeff)")
+# plot(Ys, abs.(cls), label="Abs(2D lift coeff)")
 #
 # Copyright HJA Bird 2019-2020
 #
@@ -48,8 +48,9 @@ mutable struct GuermondUnsteady
             chord_len_scale : wing.chord_fn(0))
         span_len_scale = (span_len_scale == span_len_scale ?
             span_len_scale : wing.semispan)
+        # Note this k is half the value in the paper. 
         guermond_k = (guermond_k == guermond_k ?
-            guermond_k : angular_fq * chord_len_scale / free_stream_vel)
+            guermond_k : angular_fq * chord_len_scale / (2*free_stream_vel))
         guermond_nu = (guermond_nu == guermond_nu ?
             guermond_nu : angular_fq * span_len_scale / free_stream_vel)
 
@@ -104,7 +105,7 @@ function upwash_distribution(a::GuermondUnsteady, Y::Real; order::Int=1)
         ar = aspect_ratio(a.wing)
         pd_coeff = operator_K1_excl_exp_term(a, Y)
         uws = make_sinusoidal_gust_function(HarmonicUpwash2D,
-            pd_coeff, k; free_stream_vel= U, semichord=chord/2)
+            -pd_coeff, 2*a.guermond_k; free_stream_vel= U, semichord=chord/2)
         #uws = make_plunge_function(HarmonicUpwash2D, pd_coeff / a.angular_fq, k;
         #    free_stream_vel = a.free_stream_vel, semichord=chord/2)
         uw = uw - uws/ ar
@@ -124,7 +125,7 @@ function operator_K1_excl_exp_term(a::GuermondUnsteady, Y::Real)
     # The bound vorticity in G&S is calculated according to the normalised
     # problem, but here we are using Kussner-Schwarz to do the work so 
     # we must divide through by U. I think.
-    G = bound_vorticity(a, y; order=0) * exp(im * k * C / 2) / a.free_stream_vel
+    G = bound_vorticity(a, y; order=0) * exp(im * k * C) / a.free_stream_vel
 
     # The nasty to compute constant bit
     t1 = 1 / (2 * pi)
@@ -139,7 +140,7 @@ function operator_K1_excl_exp_term(a::GuermondUnsteady, Y::Real)
         ti3 = 2 / (y^2 - 1)
         return  ti21 + ti22 + ti23 + ti3
     end
-    t222 = fejer_quadrature_exp(integrand, nu, -Inf, -1e-8; finite=true)
+    t222 = filon_quadrature_exp(integrand, nu, -Inf, -1e-8; finite=true)
     @assert(isfinite(t222), "Term 3 (the integral) isn't finite!")
     constpart = t1 * (t21 + t221 * t222)
 
@@ -169,9 +170,10 @@ end
 
 function lift_coefficient(a::GuermondUnsteady; order=1)
     s = a.wing.semispan
-    points, weights = FastGaussQuadrature.gausslegendre(100)
+    #points, weights = FastGaussQuadrature.gausslegendre(25)
+    points, weights = FastGaussQuadrature.gausschebyshev(50, 1) # Mod sqrt(1-x^2) below!
     points, weights = linear_remap(points, weights, -1, 1, -s, s)
-    lctc = Y->lift_coefficient(a, Y; order=order) * a.wing.chord_fn(Y)
+    lctc = Y->lift_coefficient(a, Y; order=order) * a.wing.chord_fn(Y) * sqrt(1 - (Y/s)^2)
     CL = sum(weights .* map(lctc, points)) / area(a.wing)
     return CL
 end
