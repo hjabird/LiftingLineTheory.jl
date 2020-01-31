@@ -16,9 +16,9 @@
 # compute_fourier_terms!(prob)
 # Ys = collect(-1.99:0.01:1.99)
 # bvs = map(y->bound_vorticity(prob, y), Ys) # Returns complex!
-# cls = map(y->bound_vorticity(prob, y), Ys) # Returns complex!
+# cls = map(y->lift_coefficient(prob, y), Ys) # Returns complex!
 # plot(Ys, abs.(bvs), label="Abs(Bound vorticity)")
-# plot(Ys, abs.(bvs), label="Abs(2D lift coeff)")
+# plot(Ys, abs.(cls), label="Abs(2D lift coeff)")
 #
 # Copyright HJA Bird 2020
 #
@@ -37,8 +37,9 @@ mutable struct GuermondUnsteady2
     guermond_k :: Float64       # This is uniform over the wing!
     guermond_nu :: Float64
 
+    symmetric :: Bool   # Do we have a symmetric problem?
     num_terms :: Int64
-    fourier_terms :: Vector{ComplexF64}     # G distribution.
+    fourier_terms :: Vector{ComplexF64}     # Bound vorticity distribution.
     collocation_points :: Vector{Float64}   # Collocation points in [0, pi]
 
     function GuermondUnsteady2(
@@ -47,7 +48,8 @@ mutable struct GuermondUnsteady2
         pitch_plunge::Int=3, chord_len_scale::Real=NaN,
         span_len_scale::Real=NaN, guermond_k::Real=NaN,
         guermond_nu::Real=NaN, num_terms::Int=8,
-        fourier_terms=zeros(ComplexF64, 0), collocation_points=zeros(0))
+        fourier_terms=zeros(ComplexF64, 0), collocation_points=zeros(0),
+        symmetric=true)
 
         chord_len_scale = (chord_len_scale == chord_len_scale ?
             chord_len_scale : wing.chord_fn(0))
@@ -60,7 +62,7 @@ mutable struct GuermondUnsteady2
 
         return new(Float64(angular_fq), Float64(free_stream_vel), wing, 
             amplitude_fn, pitch_plunge, chord_len_scale, span_len_scale,
-            guermond_k, guermond_nu, 
+            guermond_k, guermond_nu, symmetric,
             num_terms, fourier_terms, collocation_points)
     end
 end
@@ -82,6 +84,16 @@ function y_to_Y(a::GuermondUnsteady2, y::Vector{<:Real})
     return y .* a.wing.semispan
 end
 
+function j_to_n(a::GuermondUnsteady2, j::Integer) :: Integer
+    @assert(j >= 1)
+    if a.symmetric
+        n = 2 * j - 1
+    else
+        n = j
+    end
+    return n
+end
+
 # Generate collocation points.
 function compute_collocation_points!(
     a :: GuermondUnsteady2) :: Nothing
@@ -90,11 +102,41 @@ function compute_collocation_points!(
     @assert(nt > 0, "Number of terms in GuermondUnsteady2 must be more than 0")
     pos = Vector{Float64}(undef, a.num_terms)
     hpi = pi / 2
-    for i = 1 : nt
-        pos[i] = pi / (2 * i)
+    if a.symmetric
+        #for i = 1 : nt
+        #    pos[i] = pi / (2 * i)
+        #end    nt = a.num_terms
+        for i = 1 : nt
+            pos[i] = (pi * i - hpi) / (2 * nt)
+        end
+        a.collocation_points = pos
+    else
+        for i = 1 : nt
+            pos[i] = pi / (2 * i)
+        end
+        for i = 2 : 2 : nt - 1
+            pos[i] = pi - pos[i+1]
+        end
     end
     a.collocation_points = pos
     return
+end
+
+# 3D bound vorticity from fourier series
+function gamma_value(a ::GuermondUnsteady2, y :: Real) :: ComplexF64
+    @assert(abs(y) <= 1, "Not -1 <= "*string(y)*" <= 1")
+    @assert(length(a.collocation_points) == a.num_terms, "a.num_terms does not"*
+        " match the number of computed collocation_points. Did you use "*
+        "compute_collocation_points!(problem :: GuermondUnsteady2)?")
+    @assert(length(a.fourier_terms) == a.num_terms, "a.num_terms does not"*
+        " match the number of computed fourier terms. Did you use "*
+        "compute_fourier_terms!(problem :: GuermondUnsteady2)?")
+    val = ComplexF64(0)
+    theta = acos(y)
+    for n = 1 : a.num_terms
+        val += a.fourier_terms[n] * sin(j_to_n(a, n) * theta)
+    end
+    return val
 end
 
 # Solve the overall problem using linear algebra.
@@ -106,11 +148,11 @@ function compute_fourier_terms!(
     terms3d = zeros(ComplexF64, a.num_terms, a.num_terms)
     
     terms2d = g2d(a)
-    #terms3d = g3d(a)
+    terms3d = g3d(a)
     lhs_terms = create_lhs_terms(a)
 
     # I think that should be + below here but - gives more expected result.
-    sol_mtrx = lhs_terms# .+ terms3d ./ aspect_ratio(a.wing)
+    sol_mtrx = lhs_terms .- terms3d ./ aspect_ratio(a.wing)
     display(sol_mtrx)
     display(abs.(sol_mtrx))
     display(cond(sol_mtrx))
@@ -123,7 +165,7 @@ end
 function g2d(a :: GuermondUnsteady2) :: Vector{ComplexF64}
     ys = cos.(a.collocation_points)
     Ys = a.wing.semispan .* ys
-    gs = zeros(ComplexF64, a.num_terms)
+    gammas = zeros(ComplexF64, a.num_terms)
     U = a.free_stream_vel
     guerk = a.guermond_k
 
@@ -139,9 +181,9 @@ function g2d(a :: GuermondUnsteady2) :: Vector{ComplexF64}
                 free_stream_vel = a.free_stream_vel, semichord=chord/2)
         end
         bv = bound_vorticity(uw)
-        gs[i] = bv * exp(im * guerk * chord / 2)
+        gammas[i] = bv
     end
-    return gs
+    return gammas
 end
 
 # The matrix representing the sin(j * acos(theta_i)).
@@ -149,7 +191,7 @@ function create_lhs_terms(a :: GuermondUnsteady2) :: Matrix{ComplexF64}
     t = zeros(ComplexF64, a.num_terms, a.num_terms)
     for i = 1 : a.num_terms
         for j = 1 : a.num_terms
-            t[i, j] = sin((j) * a.collocation_points[i])
+            t[i, j] = sin(j_to_n(a, j) * a.collocation_points[i])
         end
     end
     return t
@@ -160,7 +202,7 @@ function g3d(a::GuermondUnsteady2) :: Matrix{ComplexF64}
     t = zeros(ComplexF64, a.num_terms, a.num_terms)
     for i = 1 : a.num_terms
         for j = 1 : a.num_terms
-            t[i, j] = g3d_term(a, j, a.collocation_points[i])
+            t[i, j] = g3d_term(a, j_to_n(a, j), a.collocation_points[i])
         end
     end
     return t
@@ -208,24 +250,24 @@ function g3d_term(a::GuermondUnsteady2,
                 x->inner_integral_fxp(x, v), y; n=np)
         return ti1
     end
-    tosccl = fejer_quadrature_exp(inner_terms, a.guermond_nu, 
-        -Inf, -1e-4; finite=true)
+    tosccl = filon_quadrature_exp(inner_terms, a.guermond_nu, 
+        -Inf, -1e-2; finite=true)
     total_term = nonosclterm / (4 * pi) - im * a.guermond_nu * tosccl / (4 * pi)
-    println(im * a.guermond_nu * tosccl / (4 * pi))
     
     chord = a.wing.chord_fn(y * a.wing.semispan)
     omega = a.angular_fq
     U = a.free_stream_vel
-    uw = make_sinusoidal_gust_function(HarmonicUpwash2D,
-        total_term, omega * chord / (2*U); free_stream_vel= a.free_stream_vel, 
-        semichord= chord / 2 )
-    #uws = make_plunge_function(HarmonicUpwash2D, pd_coeff / a.angular_fq, k;
-    #    free_stream_vel = a.free_stream_vel, semichord=chord/2)
+    #uw = make_sinusoidal_gust_function(HarmonicUpwash2D,
+    #    total_term, omega * chord / (2*U); free_stream_vel= a.free_stream_vel, 
+    #    semichord= chord / 2 )
+    uw = make_plunge_function(HarmonicUpwash2D, total_term / a.angular_fq, 
+        omega * chord / (2*U);
+        free_stream_vel = a.free_stream_vel, semichord=chord/2)
     bv = bound_vorticity(uw)
-    gs = bv * exp(im * a.guermond_k * chord / 2)
-    return gs
+    return bv
 end
 
+#= POST-PROCESSING ----------------------------------------------------------=#
 function bound_vorticity(a::GuermondUnsteady2, Y::Real; order::Int=1) :: ComplexF64
     @assert(abs(Y) <= a.wing.semispan)
     @assert(order >= 0, "Positive order required")
@@ -237,9 +279,7 @@ function bound_vorticity(a::GuermondUnsteady2, Y::Real; order::Int=1) :: Complex
     elseif order == 1
         # Otherwise we compute from the G fourier approximation
         chordte = a.wing.chord_fn(Y) / 2
-        ph = exp(-im * chordte * a.guermond_k)
-        gv = g_value(a, Y / a.wing.semispan)
-        bv = ph * gv
+        bv = gamma_value(a, Y/a.wing.semispan)
     end
     return bv
 end
@@ -269,36 +309,20 @@ function upwash_distribution(a::GuermondUnsteady2, Y::Real; order::Int=1) :: Har
     # strength of the sinusoidal downwash all over again using the big integral
     # expression, but I don't want to program that, so solve instead:
     if order > 0 # or == 1
-        gv = g_value(a, Y/semispan)
+        bv = gamma_value(a, Y/semispan)
         # 2D
         bv2d = bound_vorticity(uw)
-        g2dv = exp(-im * a.guermond_k * chord / 2) * bv2d
         # 3D
-        unit_uw3d = make_sinusoidal_gust_function(HarmonicUpwash2D,
-            1, k; free_stream_vel= a.free_stream_vel, 
-            semichord = chord / 2 )
+        #unit_uw3d = make_sinusoidal_gust_function(HarmonicUpwash2D,
+        #    1, k; free_stream_vel= a.free_stream_vel, 
+        #    semichord = chord / 2 )
+        unit_uw3d = make_plunge_function(HarmonicUpwash2D, 1, k;
+            free_stream_vel = a.free_stream_vel, semichord=chord/2)
         unit_bv3d = bound_vorticity(uw)
-        g3dv = exp(-im * a.guermond_k * chord / 2) * bv2d
-        coeff = (gv - g2dv) / g3dv
+        coeff = (bv - bv2d) / unit_bv3d
         uw = uw + (coeff * unit_uw3d)
     end
     return uw
-end
-
-function g_value(a ::GuermondUnsteady2, y :: Real) :: ComplexF64
-    @assert(abs(y) < 1)
-    @assert(length(a.collocation_points) == a.num_terms, "a.num_terms does not"*
-        " match the number of computed collocation_points. Did you use "*
-        "compute_collocation_points!(problem :: GuermondUnsteady2)?")
-    @assert(length(a.fourier_terms) == a.num_terms, "a.num_terms does not"*
-        " match the number of computed fourier terms. Did you use "*
-        "compute_fourier_terms!(problem :: GuermondUnsteady2)?")
-    val = ComplexF64(0)
-    theta = acos(y)
-    for n = 1 : a.num_terms
-        val += a.fourier_terms[n] * sin((2*n-1) * theta)
-    end
-    return val
 end
 
 function lift_coefficient(
