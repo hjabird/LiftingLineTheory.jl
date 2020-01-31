@@ -125,8 +125,8 @@ end
 
 function assert_compatible(x::HarmonicUpwash2D, y::HarmonicUpwash2D)
     @assert(x.free_stream_vel == y.free_stream_vel, "Non-matching free_stream_vel")
-    @assert(x.omega == y.omega, "Non-matching angular frequencies: x.omega ="*
-        string(x.omega)*" =/= "*string(y.omega)*" = y.omega")
+    #@assert(x.omega == y.omega, "Non-matching angular frequencies: x.omega ="*
+    #    string(x.omega)*" =/= "*string(y.omega)*" = y.omega")
     @assert(x.semichord == y.semichord, "Non-matching semichords")
     return 
 end
