@@ -38,6 +38,7 @@ mutable struct GuermondUnsteady2
     guermond_nu :: Float64
 
     symmetric :: Bool   # Do we have a symmetric problem?
+    sinusoidal_downwash :: Bool # Sears like or uniform induced downwash?
     num_terms :: Int64
     fourier_terms :: Vector{ComplexF64}     # Bound vorticity distribution.
     collocation_points :: Vector{Float64}   # Collocation points in [0, pi]
@@ -49,20 +50,20 @@ mutable struct GuermondUnsteady2
         span_len_scale::Real=NaN, guermond_k::Real=NaN,
         guermond_nu::Real=NaN, num_terms::Int=8,
         fourier_terms=zeros(ComplexF64, 0), collocation_points=zeros(0),
-        symmetric=true)
+        symmetric=true, sinusoidal_downwash=true)
 
         chord_len_scale = (chord_len_scale == chord_len_scale ?
             chord_len_scale : wing.chord_fn(0))
         span_len_scale = (span_len_scale == span_len_scale ?
             span_len_scale : wing.semispan)
         guermond_k = (guermond_k == guermond_k ?
-            guermond_k : angular_fq * chord_len_scale / free_stream_vel)
+            guermond_k : angular_fq * chord_len_scale / (2*free_stream_vel))
         guermond_nu = (guermond_nu == guermond_nu ?
             guermond_nu : angular_fq * span_len_scale / free_stream_vel)
 
         return new(Float64(angular_fq), Float64(free_stream_vel), wing, 
             amplitude_fn, pitch_plunge, chord_len_scale, span_len_scale,
-            guermond_k, guermond_nu, symmetric,
+            guermond_k, guermond_nu, symmetric, sinusoidal_downwash,
             num_terms, fourier_terms, collocation_points)
     end
 end
@@ -141,24 +142,16 @@ end
 
 # Solve the overall problem using linear algebra.
 function compute_fourier_terms!(
-    a :: GuermondUnsteady2)
+    a :: GuermondUnsteady2) :: Nothing
 
-    terms2d = zeros(ComplexF64, a.num_terms)
-    lhs_terms = zeros(ComplexF64, a.num_terms, a.num_terms)
-    terms3d = zeros(ComplexF64, a.num_terms, a.num_terms)
-    
     terms2d = g2d(a)
     terms3d = g3d(a)
     lhs_terms = create_lhs_terms(a)
 
-    # I think that should be + below here but - gives more expected result.
-    sol_mtrx = lhs_terms .- terms3d ./ aspect_ratio(a.wing)
-    display(sol_mtrx)
-    display(abs.(sol_mtrx))
-    display(cond(sol_mtrx))
+    sol_mtrx = lhs_terms .+ terms3d ./ aspect_ratio(a.wing) ####################
     g_terms = sol_mtrx \ terms2d
     a.fourier_terms = g_terms
-    return sol_mtrx
+    return
 end
 
 # The G values for the 2D problem.
@@ -171,7 +164,7 @@ function g2d(a :: GuermondUnsteady2) :: Vector{ComplexF64}
 
     for i = 1 : length(ys)
         chord = a.wing.chord_fn(Ys[i])
-        k = a.angular_fq * chord / (2* a.free_stream_vel)
+        k = a.angular_fq * chord / (2* a.free_stream_vel)   # Local k
         amp = a.amplitude_fn(Ys[i])
         if a.pitch_plunge == 3
             uw = make_plunge_function(HarmonicUpwash2D, amp, k;
@@ -253,16 +246,20 @@ function g3d_term(a::GuermondUnsteady2,
     tosccl = filon_quadrature_exp(inner_terms, a.guermond_nu, 
         -Inf, -1e-2; finite=true)
     total_term = nonosclterm / (4 * pi) - im * a.guermond_nu * tosccl / (4 * pi)
+    total_term = total_term * exp(2 * im * a.guermond_k)
     
     chord = a.wing.chord_fn(y * a.wing.semispan)
     omega = a.angular_fq
     U = a.free_stream_vel
-    #uw = make_sinusoidal_gust_function(HarmonicUpwash2D,
-    #    total_term, omega * chord / (2*U); free_stream_vel= a.free_stream_vel, 
-    #    semichord= chord / 2 )
-    uw = make_plunge_function(HarmonicUpwash2D, total_term / a.angular_fq, 
-        omega * chord / (2*U);
-        free_stream_vel = a.free_stream_vel, semichord=chord/2)
+    if a.sinusoidal_downwash
+        uw = make_sinusoidal_gust_function(HarmonicUpwash2D,
+            total_term, 2*a.guermond_k; free_stream_vel= a.free_stream_vel, 
+            semichord= chord / 2 )
+    else
+        uw = make_plunge_function(HarmonicUpwash2D, total_term / a.angular_fq, 
+            omega * chord / (2*U);
+            free_stream_vel = a.free_stream_vel, semichord=chord/2)
+    end
     bv = bound_vorticity(uw)
     return bv
 end
@@ -313,11 +310,14 @@ function upwash_distribution(a::GuermondUnsteady2, Y::Real; order::Int=1) :: Har
         # 2D
         bv2d = bound_vorticity(uw)
         # 3D
-        #unit_uw3d = make_sinusoidal_gust_function(HarmonicUpwash2D,
-        #    1, k; free_stream_vel= a.free_stream_vel, 
-        #    semichord = chord / 2 )
-        unit_uw3d = make_plunge_function(HarmonicUpwash2D, 1, k;
-            free_stream_vel = a.free_stream_vel, semichord=chord/2)
+        if a.sinusoidal_downwash
+            unit_uw3d = make_sinusoidal_gust_function(HarmonicUpwash2D,
+                1, 2*a.guermond_k; free_stream_vel= a.free_stream_vel, 
+                semichord= chord / 2 )
+        else
+            unit_uw3d = make_plunge_function(HarmonicUpwash2D, 1 / a.angular_fq, 
+            2*a.guermond_k; free_stream_vel = a.free_stream_vel, semichord=chord/2)
+        end
         unit_bv3d = bound_vorticity(uw)
         coeff = (bv - bv2d) / unit_bv3d
         uw = uw + (coeff * unit_uw3d)
