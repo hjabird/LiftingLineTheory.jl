@@ -141,16 +141,38 @@ end
 
 # Solve the overall problem using linear algebra.
 function compute_fourier_terms!(
-    a :: GuermondUnsteady2) :: Nothing
+    a :: GuermondUnsteady2)
 
     terms2d = g2d(a)
     terms3d = g3d(a)
     lhs_terms = create_lhs_terms(a)
 
-    sol_mtrx = lhs_terms .+ terms3d ./ aspect_ratio(a.wing)
+    sol_mtrx = lhs_terms .+ terms3d
     g_terms = sol_mtrx \ terms2d
     a.fourier_terms = g_terms
-    return
+    return lhs_terms, terms3d
+end
+
+function unit_upwash_from_outer(a :: GuermondUnsteady2, Y :: Real) :: HarmonicUpwash2D
+
+    chord = a.wing.chord_fn(Y)
+    omega = a.angular_fq
+    U = a.free_stream_vel
+    # Functions below are with respect to local chord reduced frequency =
+    # omega c(y) / 2U as arg 3.
+    if a.sinusoidal_downwash
+        unit_upwash = make_sinusoidal_gust_function(HarmonicUpwash2D,
+            1, NaN; free_stream_vel= a.free_stream_vel, 
+            semichord = chord / 2,
+            oscillatory_frequency = a.angular_fq,
+            wake_frequency = 2 * a.guermond_k)
+    else
+        unit_upwash = make_plunge_function(HarmonicUpwash2D, -1 / (im * a.angular_fq), 
+            NaN; free_stream_vel = a.free_stream_vel, semichord=chord/2,
+            oscillatory_frequency = a.angular_fq)
+    end
+
+    return unit_upwash
 end
 
 # The G values for the 2D problem.
@@ -193,15 +215,25 @@ end
 function g3d(a::GuermondUnsteady2) :: Matrix{ComplexF64}
     t = zeros(ComplexF64, a.num_terms, a.num_terms)
     for i = 1 : a.num_terms
+        coeff = I_coeff(a, a.collocation_points[i])
         for j = 1 : a.num_terms
-            t[i, j] = g3d_term(a, j_to_n(a, j), a.collocation_points[i])
+            t[i, j] = coeff * I3d_term(a, j_to_n(a, j), a.collocation_points[i])
         end
     end
     return t
 end
 
-# Actually calculate the g3d integral.
-function g3d_term(a::GuermondUnsteady2, 
+function I_coeff(a :: GuermondUnsteady2, y :: Real) :: Number
+
+    ar = aspect_ratio(a.wing)
+    unit_upwash = unit_upwash_from_outer(a, y * a.wing.semispan)
+    gv = bound_vorticity(unit_upwash) * exp(
+        im * a.guermond_k * a.wing.chord_fn(y * a.wing.semispan))
+    return gv / ar
+end
+
+# Actually calculate the I integral.
+function I3d_term(a::GuermondUnsteady2, 
     n :: Integer, theta :: Real) :: ComplexF64
 
     y = cos(theta)
@@ -246,21 +278,7 @@ function g3d_term(a::GuermondUnsteady2,
         -Inf, -1e-2; finite=true)
     total_term = nonosclterm / (4 * pi) - im * a.guermond_nu * tosccl / (4 * pi)
     total_term = total_term * exp(2 * im * a.guermond_k)
-    
-    chord = a.wing.chord_fn(y * a.wing.semispan)
-    omega = a.angular_fq
-    U = a.free_stream_vel
-    if a.sinusoidal_downwash
-        uw = make_sinusoidal_gust_function(HarmonicUpwash2D,
-            total_term, 2*a.guermond_k; free_stream_vel= a.free_stream_vel, 
-            semichord= chord / 2 )
-    else
-        uw = make_plunge_function(HarmonicUpwash2D, -total_term / (im * a.angular_fq), 
-            omega * chord / (2*U);
-            free_stream_vel = a.free_stream_vel, semichord=chord/2)
-    end
-    gv = bound_vorticity(uw) * exp(im * a.guermond_k * a.wing.chord_fn(y * a.wing.semispan))
-    return gv
+    return total_term
 end
 
 #= POST-PROCESSING ----------------------------------------------------------=#
@@ -293,6 +311,7 @@ function upwash_distribution(a::GuermondUnsteady2, Y::Real; order::Int=1) :: Har
     chord = a.wing.chord_fn(Y)
     k = a.angular_fq * chord / (2* a.free_stream_vel) # Not the same as guermond_k
     amp = a.amplitude_fn(Y)
+    #ar = aspect_ratio(a.wing)
     # 0th order: 2D
     if a.pitch_plunge == 3
         uw = make_plunge_function(HarmonicUpwash2D, amp, k;
@@ -309,18 +328,10 @@ function upwash_distribution(a::GuermondUnsteady2, Y::Real; order::Int=1) :: Har
         # 2D
         bv2d = bound_vorticity(uw)
         # 3D
-        if a.sinusoidal_downwash
-            unit_uw3d = make_sinusoidal_gust_function(HarmonicUpwash2D,
-                1, 2*a.guermond_k; free_stream_vel= a.free_stream_vel, 
-                semichord= chord / 2 )
-        else
-            unit_uw3d = make_plunge_function(HarmonicUpwash2D, 
-                -1 / (im * a.angular_fq), 2*a.guermond_k; 
-                free_stream_vel = a.free_stream_vel, semichord=chord/2)
-        end
+        unit_uw3d = unit_upwash_from_outer(a, Y)
         unit_bv3d = bound_vorticity(uw)
-        coeff = (bv - bv2d) / unit_bv3d
-        uw = uw + (coeff * unit_uw3d)
+        coeff = (bv2d - bv) / unit_bv3d     # Would mult by AR only to divide...
+        uw =  uw + (coeff * unit_uw3d)       # ...down here.
     end
     return uw
 end
