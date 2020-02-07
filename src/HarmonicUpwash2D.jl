@@ -60,12 +60,20 @@ end
 
 function make_plunge_function(::Type{HarmonicUpwash2D}, 
     amplitude::Number, k::Real; 
-    free_stream_vel::Real=1, semichord::Real=0.5)
+    free_stream_vel::Real=1, semichord::Real=0.5,
+    oscillatory_frequency::Real=NaN)
+
     @assert(free_stream_vel > 0)
     @assert(isfinite(amplitude))
-    @assert(k > 0, "Reduced frequency must be positive")
     @assert(semichord > 0, "Semichord must be positive")
-    omega = free_stream_vel * k / semichord
+    if !isfinite(k)
+        @assert(isfinite(oscillatory_frequency))
+        omega = oscillatory_frequency
+    else
+        @assert(k > 0, "Reduced frequency must be positive")
+        omega = free_stream_vel * k / semichord
+    end
+
     ret = HarmonicUpwash2D(
         free_stream_vel, 
         omega,
@@ -94,23 +102,29 @@ function make_pitch_function(::Type{HarmonicUpwash2D},
 end
 
 function make_sinusoidal_gust_function(::Type{HarmonicUpwash2D}, 
-    amplitude::Number, k::Real; 
+    amplitude::Number, k::Real; # k = NaN indicates that oscillatory fq and wavelength unrelated
     free_stream_vel::Real=1, semichord::Real=0.5,
-    number_of_terms::Integer=20)
+    number_of_terms::Integer=20, oscillatory_frequency::Real=NaN,
+    wake_frequency::Real=NaN)
+
     @assert(free_stream_vel > 0)
     @assert(isfinite(amplitude))
-    @assert(k > 0, "Reduced frequency must be positive")
     @assert(semichord > 0, "Semichord must be positive")
     @assert(number_of_terms > 0, "Number of terms must be postive integer")
-    omega = free_stream_vel * k / semichord
-    #= OLD CODE THAT I BELIEVE TO BE WONG.
-    p0_term = -amplitude * SpecialFunctions.besselj(0, k) / free_stream_vel
+    if !isfinite(k)
+        @assert(isfinite(oscillatory_frequency))
+        omega = oscillatory_frequency
+        @assert(isfinite(wake_frequency))
+        ke = wake_frequency
+    else
+        @assert(k > 0, "Reduced frequency must be positive")
+        omega = free_stream_vel * k / semichord
+        ke = k
+    end
+    
+    p0_term = amplitude * SpecialFunctions.besselj(0, ke) / free_stream_vel
     pn_terms = map(
-        n->-2 * (-im)^n * amplitude * SpecialFunctions.besselj(n, k) / free_stream_vel,
-        1:number_of_terms-1)        =#
-    p0_term = amplitude * SpecialFunctions.besselj(0, k) / free_stream_vel
-    pn_terms = map(
-        n-> (-im)^n * amplitude * SpecialFunctions.besselj(n, k) / free_stream_vel,
+        n-> (-im)^n * amplitude * SpecialFunctions.besselj(n, ke) / free_stream_vel,
         1:number_of_terms-1)
     
     ret = HarmonicUpwash2D(
@@ -125,8 +139,8 @@ end
 
 function assert_compatible(x::HarmonicUpwash2D, y::HarmonicUpwash2D)
     @assert(x.free_stream_vel == y.free_stream_vel, "Non-matching free_stream_vel")
-    #@assert(x.omega == y.omega, "Non-matching angular frequencies: x.omega ="*
-    #    string(x.omega)*" =/= "*string(y.omega)*" = y.omega")
+    @assert(x.omega == y.omega, "Non-matching angular frequencies: x.omega ="*
+        string(x.omega)*" =/= "*string(y.omega)*" = y.omega")
     @assert(x.semichord == y.semichord, "Non-matching semichords")
     return 
 end
