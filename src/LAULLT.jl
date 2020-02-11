@@ -345,14 +345,30 @@ function lift_and_drag_coefficient_splines(a::LAULLT)
     drags[1] = 0
     for i = 1 : length(eypts)-2
         lifts[i+1], drags[i+1] = lift_and_drag_coefficients(a.inner_sols[i])
-        lifts[i+1] *= chord(a.wing_planform, a.inner_sol_positions[i])
-        drags[i+1] *= chord(a.wing_planform, a.inner_sol_positions[i])
+        lifts[i+1] *= chord(a.wing_planform, ypts[i])
+        drags[i+1] *= chord(a.wing_planform, ypts[i])
     end
     lifts[end] = 0
     drags[end] = 0
     ls = CubicSpline{Float64}(eypts, lifts)
     ds = CubicSpline{Float64}(eypts, drags)
     return ls, ds
+end
+
+# Returns local C_l * chord and C_d * chord as spline.
+function moment_coefficient_spline(a::LAULLT; xref=0.0)
+    semispan = a.wing_planform.semispan
+    ypts = semispan * a.inner_sol_positions
+    eypts = vcat([-semispan], ypts, [semispan])
+    moments = zeros(length(eypts))
+    moments[1] = 0
+    for i = 1 : length(eypts)-2
+        moments[i+1] = moment_coefficient(a.inner_sols[i], xref=xref)
+        moments[i+1] *= chord(a.wing_planform, ypts[i])
+    end
+    moments[end] = 0
+    ms = CubicSpline{Float64}(eypts, moments)
+    return ms
 end
 
 # 2D C_l at a spanwise position (normalised wrt/ chord)
@@ -396,9 +412,23 @@ function drag_coefficient(a::LAULLT)
     return dragc
 end
 
-function moment_coefficient(a::LAULLT, y::Real)
+function moment_coefficient(a::LAULLT, y::Real; xref=0.)
+    semispan = a.wing_planform.semispan
+    @assert(-semispan <= y <= semispan)
+    ms =  moment_coefficient_spline(a; xref=xref)
+    c = chord(a.wing_planform, y)
+    return ms / c^2
+end
 
-    return moment_coeff
+function moment_coefficient(a::LAULLT; xref=0.)
+    semispan = a.wing_planform.semispan
+    warea = area(a.wing_planform)
+    ms =  moment_coefficient_spline(a; xref=xref)
+    points, weights = FastGaussQuadrature.gausslegendre(50)
+    points, weights = linear_remap(points, weights, -1, 1, -semispan, semispan)
+    chords = map(x->chord(a.wing_planform, x), points)
+    moments = sum(weights .* ms.(points)) / (warea * chord(a.wing_planform, 0.))
+    return moments
 end
 
 function to_vtk(a::LAULLT, filename::String;
@@ -427,7 +457,7 @@ function to_vtk(a::LAULLT, filename::String;
 end
 
 function csv_titles(a::LAULLT)
-    start = ["Time" "dt" "N" "N_Inner" "CL" "CD"]
+    start = ["Time" "dt" "N" "N_Inner" "CL" "CD" "CM"]
     for i = 1 : length(a.inner_sols)
         str = "I"*string(i)*"_"
         tmp = [str*"A0" str*"A1" str*"U3Dx" str*"U3Dz"]
@@ -440,7 +470,8 @@ function csv_row(a::LAULLT)
     inner1 = a.inner_sols[1]
     ctime = inner1.current_time
     lift, drag = lift_and_drag_coefficients(a)
-    start = [ctime inner1.dt length(inner1.te_particles.vorts) length(a.inner_sols) lift drag]
+    moment = moment_coefficient(a)
+    start = [ctime inner1.dt length(inner1.te_particles.vorts) length(a.inner_sols) lift drag moment]
     for i = 1 : length(a.inner_sols)
         inner = a.inner_sols[i]
         tmp = [inner.current_fourier_terms[1] inner.current_fourier_terms[2] inner.external_perturbation([0 0], ctime)[1,1] inner.external_perturbation([0 0], ctime)[1,2]]
