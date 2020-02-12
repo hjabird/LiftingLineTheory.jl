@@ -1,6 +1,5 @@
 #=
-A comparison of LAULLT and Sclavounos' theory for small amplitude
-heave of an AR3 wing.
+Use a OpenFOAM style input to LAUTAT.
 =#
 
 using LiftingLineTheory
@@ -8,22 +7,13 @@ using PyPlot
 using DelimitedFiles
 
 let
-    AR = 6
-    wing = LiftingLineTheory.make_rectangular(StraightAnalyticWing, AR, AR)
     dt = 0.025
-    ninner = 48
-    kinem_file = "nonsmooth_fast_pitch_eld_3deg_0.dat"
-    casename = "AR"*string(AR)*"Rect_LEpNonsmoothFast3_Ni"*string(ninner)*"_dt"*string(dt)
+    kinem_file = "smoothed_slow_pitch_eld_45deg_0.dat"
+    casename = "ARInfRect_LEpSmoothSlow45_Ni1_dt"*string(dt)
     casename = replace(casename, "." => "p")
 
 	println("Case "*casename)
-	println("AR = ", AR)
     println("dt = ", dt)
-    println("dtstar = ", 1 / wing.chord_fn(0) * dt)
-
-    bigsegs= range(-1, 1, length=ninner+1)
-    innersolpos = collect((bigsegs[2:end]+bigsegs[1:end-1])./2)
-    segs = collect(range(-1, 1, length=1*ninner+1))
 
     function read_openfoam_kinematics(file_path)
         local file = open(file_path, "r")
@@ -62,12 +52,7 @@ let
     nsteps = Int64(floor((etime-stime) / dt))
     println("nsteps = ", nsteps)
 
-    prob = LAULLT(;kinematics=kinem,
-        wing_planform=wing, dt=dt, segmentation=segs, inner_solution_positions=innersolpos,
-        current_time=stime, )
-    println("n_inner = ", length(prob.inner_sols))
-    println("inner_sol_pos = ", prob.inner_sol_positions)
-    println("Segmentation = ", prob.segmentation)
+    prob = LAUTAT(;kinematics=kinem, dt=dt, current_time=stime )
     
     hdr = csv_titles(prob)
     rows = zeros(0, length(hdr))
@@ -77,7 +62,8 @@ let
         advance_one_step(prob)
         rows = vcat(rows, csv_row(prob))
     end
-    to_vtk(prob, casename)
+    to_vtk(prob, casename;
+        updir=[0,0,1], translation=[-0.5,0,0])
 
     writefile = open(casename*".csv", "w")
     writedlm(writefile, hdr, ", ")
