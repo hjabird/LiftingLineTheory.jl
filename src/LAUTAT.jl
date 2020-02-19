@@ -372,6 +372,10 @@ function moment_coefficient(a::LAUTAT, xref::Real)
     return t
 end
 
+function moment_coefficient(a::LAUTAT; xref=0.)
+    return moment_coefficient(a, xref)
+end
+
 function aerofoil_normal_force(a::LAUTAT, density::Real)
     AoA = a.kinematics.AoA(a.current_time)
     dAoAdt = a.kinematics.dAoAdt(a.current_time)

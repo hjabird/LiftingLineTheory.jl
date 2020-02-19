@@ -12,7 +12,7 @@ let
     dtstar=0.015
     prob = LAUTAT(;
         kinematics=RigidKinematics2D(x->0, 
-            x->deg2rad(25) * rampfn(x) / rampfnmax, -0.5),
+            x->deg2rad(25) * rampfn(x) / rampfnmax, 0.5),
         dt=dtstar,
         regularisation=singular_regularisation())
 
@@ -28,7 +28,7 @@ let
 
     figure()
     ax = gca()
-    ax.imshow(imread("scripts/Ramesh13ref/Fig6.PNG"), extent=[0, 7, -20, 40])
+    ax.imshow(imread("scripts/LAUTAT/Ramesh13ref/Fig18.PNG"), extent=[0, 7, -20, 40])
     ax.set_aspect("auto")
     p = plot(rows[:, 1], rad2deg.(rows[:, 6]), "g-", label="AoA")
     ylabel("AoA")

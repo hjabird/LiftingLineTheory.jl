@@ -3,8 +3,8 @@ Replicate Figure 6 from Ramesh 2013
 =#
 
 using LiftingLineTheory
-using CVortex
 using PyPlot
+using CVortex
 
 let
     rampfn = x->eldredge_ramp(x, 1, 3, 4, 6, 1, 1; a=11)
@@ -12,7 +12,7 @@ let
     dtstar=0.015
     prob = LAUTAT(;
         kinematics=RigidKinematics2D(x->0, 
-            x->deg2rad(45) * rampfn(x) / rampfnmax, -0.5),
+            x->deg2rad(25) * rampfn(x) / rampfnmax, -0.5),
         dt=dtstar,
         regularisation=singular_regularisation())
 
@@ -28,14 +28,14 @@ let
 
     figure()
     ax = gca()
-    ax.imshow(imread("scripts/Ramesh13ref/Fig9.PNG"), extent=[0, 7, -20, 60])
+    ax.imshow(imread("scripts/LAUTAT/Ramesh13ref/Fig6.PNG"), extent=[0, 7, -20, 40])
     ax.set_aspect("auto")
     p = plot(rows[:, 1], rad2deg.(rows[:, 6]), "g-", label="AoA")
     ylabel("AoA")
-    axis([0, 7, -20, 60])
+    axis([0, 7, -20, 40])
     ax2 = twinx(ax)
     plot(rows[:, 1], rows[:, 9], "r-", label="C_L")
     ylabel("Cl")
-    axis([0, 7, -2, 6])
+    axis([0, 7, -2, 4])
     xlabel("Time")
 end

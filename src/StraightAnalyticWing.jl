@@ -67,7 +67,8 @@ function chord(
     a :: StraightAnalyticWing,
     y :: Real)
     @assert(abs(y) <= a.semispan, "Global coordinate must be in"*
-        " [-semispan, semispan].")
+        " [-semispan, semispan]. Was "*string(y)*" with semispan of "*
+        string(a.semispan)*".")
     return a.chord_fn(y)
 end
 
