@@ -96,9 +96,12 @@ function compute_collocation_points!(
     nt = a.num_terms
     @assert(nt > 0, "Number of terms in HarmonicULLT2 must be more than 0")
     pos = Vector{Float64}(undef, a.num_terms)
-    hpi = pi / 2
+    #hpi = pi / 2
+    #for i = 1 : nt
+    #    pos[i] = (pi * i - hpi) / (2 * nt)
+    #end
     for i = 1 : nt
-        pos[i] = (pi * i - hpi) / (2 * nt)
+        pos[i] = i * (pi / 2) / (nt + 1)
     end
     a.collocation_points = pos
     return
@@ -214,9 +217,9 @@ function integrate_gammaprime_k_streamwise_fil(
     function non_singular(dy)
         sgn = dy > 0 ? 1 : -1
         co = v*dy
-        t1 = v*abs(dy) != 0 ? sgn*co* SpecialFunctions.besselk(1,v*abs(dy)) : 1
-        t2 = 1/2 *co* im * pi * (                                               # Extra sign term here to get it to work...
-            struve_l(-1, v*dy) - SpecialFunctions.besseli(1, v*abs(dy)))
+        t1 = v*abs(dy) != 0 ? v * abs(dy) * SpecialFunctions.besselk(1,v*abs(dy)) : 1
+        t2 = 1/2 * v * abs(dy) * im * pi * (
+            SpecialFunctions.besseli(1, v*abs(dy)) - struve_l(-1, v*dy))
         return t1 + t2
     end
     ssm_var = non_singular(0)
@@ -245,12 +248,12 @@ function integrate_gammaprime_k_streamwise_fil(
     return ret
 end
 
+#= ORINGINAL IMPL
 function integrate_gammaprime_k_spanwise_fil(
     a :: HarmonicULLT2,
     y :: Real,
     k :: Integer)
 
-    #println("Integrating spanwise!")
     theta_sing = y_to_theta(a, y) 
     gamma_local = sin((2 * k + 1) * theta_sing)
     v = a.angular_fq / a.free_stream_vel
@@ -258,10 +261,10 @@ function integrate_gammaprime_k_spanwise_fil(
 
     # Off the wing tips:
     function tip_dw(dy)
-        t1 = -im * gamma_local * v / ( 4 * pi )
-        t21 = im * pi * SpecialFunctions.besseli(0, v * abs(dy)) / 2
-        t22 = SpecialFunctions.besselk(0, v * abs(dy))
-        t23 = -pi * im * struve_l(0, v * dy) / 2
+        local t1 = -im * gamma_local * v / ( 2 * pi )
+        local t21 = im * pi * SpecialFunctions.besseli(0, v * abs(dy)) / 2
+        local t22 = SpecialFunctions.besselk(0, v * abs(dy))
+        local t23 = -pi * im * struve_l(0, v * abs(dy)) / 2
         return t1 * (t21 + t22 + t23)
     end
     tips_effect = tip_dw(s - y) + tip_dw(s + y)
@@ -273,8 +276,8 @@ function integrate_gammaprime_k_spanwise_fil(
         co = - im * v / (4*pi)
         va = v * abs(dy)
         t1 = 1 / abs(dy)
-        t2 = v/2 * (-pi*SpecialFunctions.besseli(0, va) + 2*im *SpecialFunctions.besselk(0, va))
-        t3 = pi * struve_l(0, va)
+        t2 = v * pi /2 * (SpecialFunctions.besseli(0, va) - struve_l(0, va))
+        t3 = im * v * SpecialFunctions.besselk(0, va)
         return gamma_diff * co * (t1 + t2 + t3)
     end
 
@@ -289,7 +292,76 @@ function integrate_gammaprime_k_spanwise_fil(
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
     
-    return - (tips_effect) - integral 
+    return - tips_effect - integral 
+end
+=#
+using PyPlot
+function integrate_gammaprime_k_spanwise_fil(
+    a :: HarmonicULLT2,
+    y :: Real,
+    k :: Integer)
+
+    theta_sing = y_to_theta(a, y) 
+    gamma_local = sin((2 * k + 1) * theta_sing)
+    v = a.angular_fq / a.free_stream_vel
+    s = a.wing.semispan
+
+    coeff = - im * v / (4 * pi)
+
+    function integrand_inspan(eta)
+        local delta_gamma = sin( (2 * k + 1) * y_to_theta(a, eta)) - gamma_local
+        local vay = v * abs(y - eta)
+        local ti11 = pi * v * (y - eta) / 2
+        local ti12 = SpecialFunctions.besseli(0, vay) - struve_l(0, vay)
+        local ti2 = im * v * (y-eta) * SpecialFunctions.besselk(0, vay)
+        local ti3 = - (y > eta ? 1 : -1);
+        return delta_gamma * (ti11 * ti12 + ti2 + ti3) / (y - eta)
+    end
+    nodes1, weights1 = FastGaussQuadrature.gausslegendre(50)   
+    pts2 = map(
+        x->linear_remap(x[1], x[2], -1, 1, y, s),
+        zip(nodes1, weights1))
+    pts1 = map(
+        x->linear_remap(x[1], x[2], -1, 1, -s, y),
+        zip(nodes1, weights1))
+    integral_inspan =
+        sum(last.(pts1) .* map(integrand_inspan, first.(pts1))) +
+        sum(last.(pts2) .* map(integrand_inspan, first.(pts2))) 
+
+    function nonsing_part_outer(eta)
+        local delta_gamma = -gamma_local
+        local vay = v * abs(y - eta)
+        local ti11 = pi * v * (y - eta) / 2
+        local ti12 = SpecialFunctions.besseli(0, vay) - struve_l(0, vay)
+        local ti2 = im * v * (y-eta) * SpecialFunctions.besselk(0, vay)
+        local ti3 = - (y > eta ? 1 : -1);
+        return delta_gamma * (ti11 * ti12 + ti2 + ti3) * (y-eta)
+    end
+    non_singular_ps = nonsing_part_outer( s)
+    non_singular_ms = nonsing_part_outer(-s)
+    function integrand_outspan_ms(eta)
+        return (nonsing_part_outer(eta) - non_singular_ms) / (y - eta)^2 # Since we're integrating to infinity
+    end
+    function integrand_outspan_ps(eta)
+        return (nonsing_part_outer(eta) - non_singular_ps) / (y - eta)^2
+    end
+    nodes1, weights1 = FastGaussQuadrature.gausslaguerre(5)   
+    nodes2 = map(x->x+s, nodes1)
+    nodes1 = map(x->-(x+s), nodes1)
+    #integral_outspan, ~ = QuadGK.quadgk(integrand_outspan, -Inf, -s; rtol=1e-3) +
+     #   QuadGK.quadgk(integrand_outspan, s, Inf; rtol=1e-5) +
+    #    1 / (s-y) + 1 / (s + y)
+    #    sum(weights1 .* map(integrand_outspan, nodes1)) +
+    #    sum(weights1 .* map(integrand_outspan, nodes2)) 
+
+    ysm = collect(-4:0.1:-2)
+    plot(ysm, map(y->real(coeff * integrand_outspan_ms(y)), ysm), label="k=0.1")
+    plot(ysm, map(y->imag(coeff * integrand_outspan_ms(y)), ysm), label="k=0.1")
+    ysp = collect(2:0.1:4);
+    plot(ysp, map(y->real(coeff * integrand_outspan_ps(y)), ysp), label="k=0.1")
+    plot(ysp, map(y->imag(coeff * integrand_outspan_ps(y)), ysp), label="k=0.1")
+
+    return coeff * (integral_inspan + integral_outspan); 
 end
 
 function gamma_terms_matrix(

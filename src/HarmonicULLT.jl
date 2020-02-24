@@ -118,6 +118,9 @@ function compute_collocation_points!(
     for i = 1 : nt
         pos[i] = (pi * i - hpi) / (2 * nt)
     end
+    #for i = 1 : nt
+    #    pos[i] = i * (pi / 2) / (nt + 1)
+    #end
     a.collocation_points = pos
     return
 end
@@ -438,6 +441,8 @@ function integrate_gammaprime_k_psuedosteady(
 end
 
 # 3D integral for oscillating streamwise filaments =============================
+
+#= ORIGINAL IMPLEMENTATION (belived to be wrong!) now commented out.
 function integrate_gammaprime_k_streamwise_fil(
     a :: HarmonicULLT,
     y :: Real,
@@ -484,6 +489,48 @@ function integrate_gammaprime_k_streamwise_fil_subint(
     points, weights = FastGaussQuadrature.gausslaguerre(50)
     integral = sum(weights .* integrand.(points))
     return integral
+end =#
+
+function integrate_gammaprime_k_streamwise_fil(
+    a :: HarmonicULLT,
+    y :: Real,
+    k :: Integer)
+
+    theta_singular = y_to_theta(a, y)
+    v = a.angular_fq / a.free_stream_vel
+    s = a.wing.semispan
+    function non_singular(dy)
+        sgn = dy > 0 ? 1 : -1
+        co = v*dy
+        t1 = v*abs(dy) != 0 ? v * abs(dy) * SpecialFunctions.besselk(1,v*abs(dy)) : 1
+        t2 = 1/2 * v * abs(dy) * im * pi * (
+            SpecialFunctions.besseli(1, v*abs(dy)) - struve_l(-1, v*dy))
+        return t1 + t2
+    end
+    ssm_var = non_singular(0)
+    function integrand(theta_0)
+        dy = y - theta_to_y(a, theta_0)
+        sgn = dy > 0 ? 1 : -1
+        sing = s * cos((2*k+1)*theta_0) / dy
+        # We remove the singularity here and need to add it back later.
+        ns = non_singular(dy)
+        return sing * (ns - ssm_var)
+    end
+
+    nodes1, weights1 = FastGaussQuadrature.gausslegendre(70)   
+    pts2 = map(
+        x->linear_remap(x[1], x[2], -1, 1, theta_singular, pi),
+        zip(nodes1, weights1))
+    pts1 = map(
+        x->linear_remap(x[1], x[2], -1, 1, 0, theta_singular),
+        zip(nodes1, weights1))
+    integral =
+        sum(last.(pts1) .* map(integrand, first.(pts1))) +
+        sum(last.(pts2) .* map(integrand, first.(pts2))) 
+    coeff = -(2*k + 1) / (4 * pi * s)
+    ret = coeff * (integral 
+        - ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
+    return ret
 end
 
 # The shared part of the solution ==============================================
