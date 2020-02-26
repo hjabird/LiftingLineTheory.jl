@@ -622,15 +622,16 @@ function lift_coefficient(
 
     @assert((a.pitch_plunge == 3) || (a.pitch_plunge == 5),
         "HarmonicULLT.pitch_plunge must equal 3 (plunge) or 5 (pitch).")
-
     w_area = area(a.wing)
     integrand = y->lift_coefficient(a, y) * 
-        a.amplitude_fn(y) * a.wing.chord_fn(y)
-    nodes, weights = FastGaussQuadrature.gausslegendre(70)
+        a.amplitude_fn(y) * a.wing.chord_fn(y) / sqrt(1 - y^2/a.wing.semispan^2)
+    nodes, weights = FastGaussQuadrature.gausschebyshev(30, 2)
     pts = map(
         x->linear_remap(x[1], x[2], -1, 1, -a.wing.semispan, a.wing.semispan),
         zip(nodes, weights))
     integral = sum(last.(pts) .* map(integrand, first.(pts)))/ w_area
+
+
     CL = integral
     return CL
 end
