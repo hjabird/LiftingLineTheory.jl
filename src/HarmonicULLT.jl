@@ -527,7 +527,7 @@ function integrate_gammaprime_k_streamwise_fil(
     integral =
         sum(last.(pts1) .* map(integrand, first.(pts1))) +
         sum(last.(pts2) .* map(integrand, first.(pts2))) 
-    coeff = -(2*k + 1) / (4 * pi * s)
+    coeff = -(2*k + 1) / (2 * s)
     ret = coeff * (integral 
         - ssm_var * pi * sin((2* k + 1) * theta_singular) / sin(theta_singular))
     return ret
@@ -630,7 +630,6 @@ function lift_coefficient(
         x->linear_remap(x[1], x[2], -1, 1, -a.wing.semispan, a.wing.semispan),
         zip(nodes, weights))
     integral = sum(last.(pts) .* map(integrand, first.(pts)))/ w_area
-
 
     CL = integral
     return CL
