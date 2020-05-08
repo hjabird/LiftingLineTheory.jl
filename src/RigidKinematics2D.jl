@@ -17,6 +17,9 @@
 #   # Or load kinematics from a matrix:
 #   kinem = from_matrix(RigidKinematics2D, source_matrix)
 #
+#   # To get the actual movement out:
+#   
+#
 # Copyright HJAB 2019-2020
 #
 ################################################################################
@@ -109,6 +112,27 @@ function make_pitch_function(::Type{RigidKinematics2D},
     @assert(isfinite(pivot_position), 
         "Denormal value given for pivot position")
     return RigidKinematics2D(x->0, x->0, AoA, dAoAdt, pivot_position)
+end
+
+# Call functions ---------------------------------------------------------------
+function z_pos(a::RigidKinematics2D, t) :: Float64
+    return a.z_pos(t)
+end
+
+function dzdt(a::RigidKinematics2D, t) :: Float64
+    return a.dzdt(t)
+end
+
+function AoA(a::RigidKinematics2D, t) :: Float64
+    return a.AoA(t)
+end
+
+function dAoAdt(a::RigidKinematics2D, t) :: Float64
+    return a.dAoAdt(t)
+end
+
+function pivot_position(a::RigidKinematics2D) :: Float64
+    return a.pivot_position
 end
 
 # IO ---------------------------------------------------------------------------

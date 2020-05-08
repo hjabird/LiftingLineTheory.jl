@@ -1,7 +1,7 @@
 #
 # LiftingLineTheory.jl
 #
-# Copyright HJA Bird 2019
+# Copyright HJA Bird 2019-2020
 # h.bird.1@research.gla.ac.uk
 # github.com/hjabird
 #
@@ -83,14 +83,19 @@ export
 	include("HarmonicUpwash2D.jl")		# Kussner-Schwarz general solution 
 	include("StraightAnalyticWing.jl")	# Define wing planform shape
 	include("CurvedAnalyticWing.jl")	# Define wing planform w/ curvature
+	include("VortexFilament.jl")		# Vortex filaments convenience methods.
 	include("VortexLattice.jl")			# A vortex lattice
+	include("ParticleGroup2D.jl")		# A vortex particle holder.
+	include("ParticleGroup3D.jl")		# A vortex particle holder.
+	include("BufferedParticleWake.jl")	# Lattice that converts to vortons.
 	include("SteadyLLT.jl")				# Prandtl lifting-line theory
 	include("HarmonicULLT.jl")			# Harmonic ULLT
 	include("HarmonicULLT2.jl")			# Harmonic ULLT
 	include("SclavounosULLT.jl")		# A faithful reproduction of Sclavounos.
 	include("GuermondUnsteady.jl")		# HF Harmonic ULLT - Rect. Wing only.
 	include("GuermondUnsteady2.jl")		# HF Harmonic ULLT - Straight wings only.
-	include("ParticleGroup2D.jl")		# A vortex particle holder.
 	include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
 	include("LAULLT.jl")				# Large amplitude lifting line theory
+	include("UnsteadyVortexLatticeMethod.jl")	# UVLM
+	include("PEVLM.jl")					# Vortex particle enhanced UVLM.
 end #END module
