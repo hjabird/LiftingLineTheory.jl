@@ -39,8 +39,8 @@ function UnsteadyVortexLatticeMethod(
     dt :: Float64 = -1.,
     free_stream_vel :: Real = 1.,
     current_time :: Float64 = 0.,
-    wing_discretisation_chordwise::Vector{<:Real}=collect(-1:0.1:1),
-    wing_discretisation_spanwise::Vector{<:Real}=collect(-1:0.2:1)
+    wing_discretisation_chordwise::Vector{<:Real}=-cos.(range(0, pi; length=10)),
+    wing_discretisation_spanwise::Vector{<:Real}=cos.(range(0, pi; length=10))
     ) :: UnsteadyVortexLatticeMethod
 
     function geom_fn(x,y)
@@ -122,6 +122,7 @@ function update_wake_lattice!(a::UnsteadyVortexLatticeMethod) :: Nothing
     ni = extent_i(a.wake)
     @assert(ni == extent_i(a.wing_lattice))
     a.wake.vertices[:,j_idx+1,:] = a.wing_lattice.vertices[:,end,:]
+    a.wake.strengths[:,j_idx] = -a.wing_lattice.strengths[:,end]
     return
 end 
 
@@ -135,12 +136,6 @@ function compute_wing_vortex_strengths!(a::UnsteadyVortexLatticeMethod) :: Nothi
     # The wing's self influence
     inf_mat, wing_ring_idxs = 
         ring_influence_matrix(a.wing_lattice, centres, normals)
-    # We need 1 row of the wake to impose the K-J condition.
-    nwi, nwj = size(a.wake.strengths)
-    adj_wake = extract_sublattice(a.wake, 1, nwi, nwj, nwj)
-    wake_inf_mat, ~ = ring_influence_matrix(adj_wake, centres, normals)
-    # Now add to wake influence matrix. 
-    inf_mat[:, wing_ring_idxs[:, size(a.wing_lattice.strengths)[2]]] += wake_inf_mat
 
     # Get const influences from the wake and free stream.
     ext_vel = external_induced_vel(a, centres)
@@ -156,21 +151,20 @@ function compute_wing_vortex_strengths!(a::UnsteadyVortexLatticeMethod) :: Nothi
     wing_vel[:,2] += daoadt .* (centres[:,1] .- piv_x)
 
     # Get the normal velocity from the wing / ext vels.
-    ext_inf = sum((ext_vel+wing_vel) .* normals, dims=2) # Dot product of each row.#
+    ext_inf = sum((-wing_vel-ext_vel) .* normals, dims=2) # Dot product of each row.#
 
     # Yay, finally something we can solve
     ring_strengths = inf_mat \ ext_inf
 
     rs = map(i->ring_strengths[i], wing_ring_idxs)
     a.wing_lattice.strengths = rs
-    a.wake.strengths[:,end] = rs[wing_ring_idxs[:, size(a.wing_lattice.strengths)[2]]]
     return
 end
 
 
 function initialise_wake!(a::UnsteadyVortexLatticeMethod) :: Nothing
-    ni = size(a.reference_wing_lattice.vertices);
-    verts = a.reference_wing_lattice.vertices[:,end:end,:]
+    ni, nj = size(a.wing_lattice.strengths);
+    verts = a.wing_lattice.vertices[:,nj:nj,:]
     a.wake = VortexLattice(verts)
     return
 end
@@ -187,13 +181,10 @@ function external_induced_vel(
     ext_vel = zeros(size(points))
     ext_vel[:,1] .= a.free_stream_vel
     nwi, nwj = size(a.wake.strengths)
-    if extent_j(a.wake) > 1
-        fstarts, fends, fstrs = to_filaments(
-            extract_sublattice(a.wake, 1, nwi, 1, nwj-1))
-        wake_ind_vel = CVortex.filament_induced_velocity(
-            fstarts, fends, fstrs, points )
-        ext_vel += wake_ind_vel
-    end
+    fstarts, fends, fstrs = to_filaments(a.wake)
+    wake_ind_vel = CVortex.filament_induced_velocity(
+        fstarts, fends, fstrs, points )
+    ext_vel += wake_ind_vel
     return ext_vel
 end
 

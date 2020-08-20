@@ -37,18 +37,26 @@ function BufferedParticleWake(
         lattice=lattice, edge_fil_strs=edge_fil_strs)
 end
 
-function get_vertices(a::BufferedParticleWake) :: Matrix{Float64}
+function get_vertices(
+    a::BufferedParticleWake;
+    include_tether=true) :: Matrix{Float64}
     # Changes to ordering here must be reflected in the
     # set_vertices! method.
 
-    fil_verts = get_vertices(a.lattice_buffer)
+    if include_tether
+        fil_verts = get_vertices(a.lattice_buffer)
+    else
+        ni, nj = size(a.lattice_buffer.vertices)
+        fil_verts = reshape(a.lattice_buffer.vertices[:, 1:nj-1, :], :, 3)
+    end
     p_verts = a.wake_particles.positions
     return cat(fil_verts, p_verts; dims=1)
 end
 
 function set_vertices!(
     a::BufferedParticleWake, 
-    vertices::Matrix{<:Real}
+    vertices::Matrix{<:Real};
+    include_tether=true
     ) :: Nothing
 
     # Changes to ordering here must be reflected in the
@@ -59,16 +67,29 @@ function set_vertices!(
         string(size(vertices))*".")
     @assert(all(isfinite.(vertices)),
         "Not all input vertices are finite.")
+
     nv_in = size(vertices)[1]
-    lattice_verts = prod(size(a.lattice_buffer.vertices)[1:2])
+    if include_tether
+        lattice_verts = prod(size(a.lattice_buffer.vertices)[1:2])
+    else
+        lni, lnj = size(a.lattice_buffer.vertices)
+        lattice_verts = lni * (lnj-1)
+    end
     particle_verts = size(a.wake_particles.positions)[1]
     n_buffer_verts = lattice_verts + particle_verts
     @assert(nv_in == n_buffer_verts, "Number of input vertices does not "*
         "match number of BufferedParticleWake vertices. There are "*
             string(nv_in) * " input vertices for an "*
             string(n_buffer_verts) * " vertex wake.")
-    set_vertices!(a.lattice_buffer, vertices[1:lattice_verts,:])
-    a.wake_particles.positions = vertices[lattice_verts+1:end, :]
+
+    if include_tether
+        set_vertices!(a.lattice_buffer, vertices[1:lattice_verts,:])
+        a.wake_particles.positions = vertices[lattice_verts+1:end, :]
+    else
+        reshp_verts = reshape(vertices[1:lattice_verts, :], lni, lnj-1, 3)
+        a.lattice_buffer.vertices[:, 1:lnj-1, :] = reshp_verts
+        a.wake_particles.positions = vertices[lattice_verts+1:end, :]
+    end
 
     check(a.lattice_buffer; do_assert=true)
     check(a.wake_particles; do_assert=true)
@@ -123,7 +144,7 @@ function buffer_to_particles(
         jmin_starts, jmin_ends, jmin_strs = edge_filaments(
             to_p_lattice; j_min=true)
         # Correct for the edge fil strs.
-        jmin_strs += a.edge_fil_strs
+        jmin_strs -= a.edge_fil_strs
         # Put 'em all together for convection.
         f_starts = cat(cf_starts, ef_starts, jmin_starts; dims=1)
         f_ends = cat(cf_ends, ef_ends, jmin_ends; dims=1)
@@ -133,14 +154,15 @@ function buffer_to_particles(
         p_locs, p_vorts = to_vortex_particles(
             VortexFilament, f_starts, f_ends, f_strs,
             particle_separation)
-        add_particles!(a.wake_particles, p_locs, p_vorts)
+        mask = reshape(sum(abs.(p_vorts); dims=2) .!= 0,:)
+        add_particles!(a.wake_particles, p_locs[mask,:], p_vorts[mask,:])
 
         # Step 3: Remove converted filaments from buffer.
         new_lattice = extract_sublattice(a.lattice_buffer,
         1, ei, ej-buffer_rows+1, ej)
         ~, ~, jmax_strs = edge_filaments(to_p_lattice; j_max=true)
         a.lattice_buffer = new_lattice
-        a.edge_fil_strs = jmax_strs
+        a.edge_fil_strs = -jmax_strs
 
         # Step 4: Profit.
     end
@@ -188,8 +210,10 @@ function get_filaments(a::BufferedParticleWake;
     function rstr(i, j)
         if (i > 0) && (j > 0) && (i <= size(r_strs)[1]) && (j <= size(r_strs)[2])
             ret = r_strs[i, j]
-        elseif j == size(r_strs)[2]+1 && (i>0) && (i <= size(r_strs)[1])
-            ret = a.edge_fil_strs[i]
+        #elseif (j == size(r_strs)[2]+1) && (i>0) && (i <= size(r_strs)[1])
+        #   ret = a.edge_fil_strs[i]
+        elseif (j == 0) && (i>0) && (i <= size(r_strs)[1])
+           ret = a.edge_fil_strs[i]
         else
             ret = 0
         end
@@ -233,9 +257,8 @@ function add_new_buffer_row!(
 
     vi, vj = size(a.lattice_buffer.vertices)
     ri = size(a.lattice_buffer.strengths)[1]
-    @assert(size(geometry)[2]==3,
-        "Input geometry should be (N, 3) but is actually "*
-        string(size(geometry))*".")
+    @assert(size(geometry)[2]==3)
+    @assert(size(geometry)[1]==vi)
     if length(ring_strengths) == 0
         ring_strengths = zeros(ri)
     else
@@ -245,12 +268,25 @@ function add_new_buffer_row!(
             " when "*string(ri)*" is needed.")
     end
 
-    add_column!(a.lattice_buffer)
-    a.lattice_buffer.vertices[:,end,:] = geometry
-    a.lattice_buffer.strengths[:,end] = ring_strengths
+    j_idx = add_column!(a.lattice_buffer)
+    a.lattice_buffer.vertices[:,j_idx+1,:] = geometry
     return
 end
 
+
+function create_initial_rings!(a::BufferedParticleWake,
+    initial_displacements::Matrix{<:Real}) :: Nothing
+
+    @assert(size(initial_displacements)[2]==3)
+    @assert(size(a.lattice_buffer.vertices)[2]==1)
+    a.lattice_buffer.vertices = cat(
+        a.lattice_buffer.vertices .+ reshape(
+            initial_displacements, :, 1, 3),
+        a.lattice_buffer.vertices
+        ; dims=2)
+    a.lattice_buffer.strengths = zeros(size(a.lattice_buffer.vertices)[1]-1, 1)
+    return
+end
 
 # Get the influence of the most recently inputted row of the
 # buffer wake.
@@ -273,14 +309,39 @@ function ring_influence_matrix(
 end
 
 
+function redistribute_particles!(
+    a::BufferedParticleWake,
+    particle_spacing::Float64;
+    redistrubtion_function::CVortex.RedistributionFunction=m4p_redistribution(),
+	negligible_vort::Real=0.1,
+	max_new_particles::Integer=-1
+    ) :: Nothing
+
+    check(a.wake_particles; do_assert=true)
+    
+    plocs = a.wake_particles.positions
+    pvorts = a.wake_particles.vorts
+    nplocs, npvorts = redistribute_particles_on_grid(
+        plocs, pvorts, 
+        redistrubtion_function, 
+        particle_spacing;
+        negligible_vort=negligible_vort,
+        max_new_particles=max_new_particles)
+    a.wake_particles.positions = nplocs
+    a.wake_particles.vorts = npvorts
+    return
+end
+
+
 function to_vtk(a::BufferedParticleWake,
     filename::String; 
     translation::Vector{<:Real}=[0., 0., 0.])
 
+    check(a; do_assert=true)
+
     nparticles = num_particles(a.wake_particles)
     fs, fe, fstr = get_filaments(a)
     nfils = size(fs)[1]
-
 
     if nfils != 0
         fpoints = vcat(fs, fe)

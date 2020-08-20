@@ -21,6 +21,7 @@ export
 	HarmonicUpwash2D,
 	LAULLT,
 	LAUTAT,
+	LDVM,
 	RigidKinematics2D,
 	StraightAnalyticWing,
 	SclavounosULLT,
@@ -54,7 +55,7 @@ export
 	strip_theory,
 	unsteady,
 	streamwise_filaments,
-	psuedosteady,
+	pseudosteady,
 
 	# Useful fuctions 
 	eldredge_ramp,
@@ -95,7 +96,10 @@ export
 	include("GuermondUnsteady.jl")		# HF Harmonic ULLT - Rect. Wing only.
 	include("GuermondUnsteady2.jl")		# HF Harmonic ULLT - Straight wings only.
 	include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
+	include("LDVM.jl")					# LESP modulated discrete vortex method.
 	include("LAULLT.jl")				# Large amplitude lifting line theory
 	include("UnsteadyVortexLatticeMethod.jl")	# UVLM
+	include("UnsteadyVortexLatticeMethod2D.jl")	# UVLM but in 2D
 	include("PEVLM.jl")					# Vortex particle enhanced UVLM.
+	include("LMPEVLM.jl")				# LESP modulated PEVLM.
 end #END module

@@ -45,15 +45,15 @@ function PEVLM(
     dt :: Float64 = -1.,
     free_stream_vel :: Real = 1.,
     current_time :: Float64 = 0.,
-    wing_discretisation_chordwise::Vector{<:Real}=collect(-1:0.1:1),
-    wing_discretisation_spanwise::Vector{<:Real}=collect(-1:0.1:1),
+    wing_discretisation_chordwise::Vector{<:Real}=collect(range(-1, 1; length=20)), #-cos.(range(0, pi; length=20)),
+    wing_discretisation_spanwise::Vector{<:Real}=cos.(range(0, pi; length=20)),
     regularisation_radius :: Float64 = -1.,
     regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation()
     ) :: PEVLM
 
     function geom_fn(x,y)
         # x and y are swapped because of the desired indexing scheme.
-        xp = y * wing.chord_fn(y * wing.semispan)/2
+        xp = y * wing.chord_fn(x * wing.semispan) / 2
         yp = x * wing.semispan
         return [xp, yp, 0]
     end
@@ -90,7 +90,7 @@ function advance_one_step(a::PEVLM) :: Nothing
     convect_wake!(a)
     a.old_wing_lattice = a.wing_lattice
     update_wing_lattice!(a)
-    update_wake_lattice!(a)
+    update_wake_lattice!(a; buffer_rows=999)
     compute_wing_vortex_strengths!(a)
     return
 end
@@ -109,28 +109,21 @@ function convect_wake!(a::PEVLM) :: Nothing
     p_locs, p_vorts = get_vortex_particles(a.te_wake)
     @assert(all(isfinite.(p_vorts)))
 
-    # Get near wake lattice vel.
     te_points = get_vertices(a.te_wake)
-    te_vels = filament_induced_velocity(f_starts, f_ends, f_str, te_points)
-    @assert(all(isfinite.(te_vels)))
-    te_vels[:,1] .+= a.free_stream_vel
-    @assert(all(isfinite.(te_vels)))
-    te_vels += CVortex.particle_induced_velocity(
-        p_locs, p_vorts, te_points,
-        a.regularisation_kernel, a.regularisation_radius)
-    @assert(all(isfinite.(te_vels)))
 
     # Get particle wake vels + dvorts.
     p_dvorts = filament_induced_dvort(
         f_starts, f_ends, f_str, p_locs, p_vorts )
     @assert(all(isfinite.(p_dvorts)), "A non-finite rate of change "*
         "of vorticity was induced on the wake particles.")
-    p_dvorts += CVortex.particle_induced_dvort(
+    p_dvorts = CVortex.particle_induced_dvort(
         p_locs, p_vorts, 
         p_locs, p_vorts,
         a.regularisation_kernel, a.regularisation_radius)
     @assert(all(isfinite.(p_dvorts)), "A non-finite rate of change "*
         "of vorticity was induced on the wake particles.")
+
+    te_vels = field_velocity(a, te_points)
 
     dt = a.dt
     # Set new near wake geometry
@@ -161,6 +154,7 @@ function update_wake_lattice!(a::PEVLM; buffer_rows::Int=1) :: Nothing
 
     wake_verts = reshape(a.wing_lattice.vertices[:,end,:],:,3)
     add_new_buffer_row!(a.te_wake, wake_verts)
+    a.te_wake.lattice_buffer.strengths[:, end] = -a.wing_lattice.strengths[:, end]
     buffer_to_particles(a.te_wake,
         2 * a.regularisation_radius / 2.0;  # Particle separation.
         buffer_rows=buffer_rows)
@@ -184,13 +178,9 @@ function compute_wing_vortex_strengths!(a::PEVLM) :: Nothing
     # The wing's self influence
     inf_mat, wing_ring_idxs = 
         ring_influence_matrix(a.wing_lattice, centres, normals)
-    # We need 1 row of the near_wake to impose the K-J condition.
-    near_wake_inf_mat = ring_influence_matrix(a.te_wake, centres, normals)
-    # Now add to near_wake influence matrix. 
-    inf_mat[:, wing_ring_idxs[:, size(a.wing_lattice.strengths)[2]]] += near_wake_inf_mat
 
     # Get const influences from the near_wake and free stream.
-    ext_vel = external_induced_vel(a, centres)
+    ext_vel = nonwing_ind_vel(a, centres)
 
     # Get the velocity of the points on the wing.
     z_vel = dzdt(a.kinematics, a.current_time) 
@@ -203,15 +193,13 @@ function compute_wing_vortex_strengths!(a::PEVLM) :: Nothing
     wing_vel[:,2] += daoadt .* (centres[:,1] .- piv_x)
 
     # Get the normal velocity from the wing / ext vels.
-    ext_inf = sum((ext_vel+wing_vel) .* normals, dims=2) # Dot product of each row.#
+    ext_inf = sum((-ext_vel+wing_vel) .* normals, dims=2) # Dot product of each row.
 
     # Yay, finally something we can solve
     ring_strengths = inf_mat \ ext_inf
 
     rs = map(i->ring_strengths[i], wing_ring_idxs)
     a.wing_lattice.strengths = rs
-    a.te_wake.lattice_buffer.strengths[:,end] = 
-        rs[wing_ring_idxs[:, size(a.wing_lattice.strengths)[2]]]
     if !all(isfinite.(rs))
         @warn("Non-finite wing vorticities computed.")
     end
@@ -220,13 +208,15 @@ end
 
 
 function initialise_wake!(a::PEVLM) :: Nothing
-    vertices = reshape(a.reference_wing_lattice.vertices[:,end:end,:], :, 3)
-    a.te_wake = BufferedParticleWake(vertices)
+    ni, nj = size(a.wing_lattice.strengths);
+    verts = a.wing_lattice.vertices[:,nj:nj,:]
+    a.te_wake.lattice_buffer = VortexLattice(verts)
+    a.te_wake.edge_fil_strs = zeros(ni)
     return
 end
 
 
-function external_induced_vel(
+function nonwing_ind_vel(
     a::PEVLM,
     points :: Matrix{Float64}
     ) :: Matrix{Float64}
@@ -239,8 +229,7 @@ function external_induced_vel(
     ext_vel = zeros(size(points))
     ext_vel[:,1] .= a.free_stream_vel
     # Influence of near wake
-    fstarts, fends, fstrs = get_filaments(
-        a.te_wake; exclude_buffer_column=true )
+    fstarts, fends, fstrs = get_filaments( a.te_wake )
     near_wake_ind_vel = CVortex.filament_induced_velocity(
         fstarts, fends, fstrs, points )
     ext_vel += near_wake_ind_vel
@@ -248,10 +237,39 @@ function external_induced_vel(
     p_locs, p_vorts = get_vortex_particles(a.te_wake)
     ext_vel += CVortex.particle_induced_velocity(
         p_locs, p_vorts, points,
-        a.regularisation_kernel, a.regularisation_radius)
+        a.regularisation_kernel, a.regularisation_radius/8)
     @assert(all(isfinite.(ext_vel)), 
         "Non-finite value in external induced vels.")
     return ext_vel
+end
+
+function field_velocity(
+    a::PEVLM,
+    points :: Matrix{Float64}
+    ) :: Matrix{Float64}
+    @assert(size(points)[2] == 3)
+    @assert(all(isfinite.(points)), "Non-finite input point.")
+
+    # Get vorticity sources.
+    fwi_starts, fwi_ends, fwi_str = to_filaments(a.wing_lattice)
+    fwa_starts, fwa_ends, fwa_str = get_filaments(a.te_wake)
+    f_starts = cat(fwi_starts, fwa_starts; dims=1)
+    f_ends = cat(fwi_ends, fwa_ends; dims=1)
+    f_str = cat(fwi_str, fwa_str; dims=1)
+    p_locs, p_vorts = get_vortex_particles(a.te_wake)
+    @assert(all(isfinite.(p_vorts)))
+
+    # Get near wake lattice vel.
+    vels = filament_induced_velocity(f_starts, f_ends, f_str, points)
+    @assert(all(isfinite.(vels)))
+    vels[:,1] .+= a.free_stream_vel
+    @assert(all(isfinite.(vels)))
+    vels += CVortex.particle_induced_velocity(
+        p_locs, p_vorts, points,
+        a.regularisation_kernel, a.regularisation_radius/8)
+    @assert(all(isfinite.(vels)))
+
+    return vels
 end
 
 
@@ -266,4 +284,37 @@ function to_vtk(a::PEVLM,
     to_vtk(a.wing_lattice, wingfile; translation=translation)
     to_vtk(a.te_wake, te_wakefile; translation=translation)
     return
+end
+
+function cross_section_vels(a::PEVLM, filename::String, y::Float64)
+    xs = collect(-1:0.025:2)
+    zs = collect(-1:0.025:1)
+    nx = length(xs)
+    nz = length(zs)
+    coord_msh = zeros(nx, nz, 3)
+    for ix = 1 : nx
+        for iz = 1 : nz
+            coord_msh[ix,iz,:] = [xs[ix], y, zs[iz]]
+        end
+    end
+    coord_msh = reshape(coord_msh,:,3)
+    vels = field_velocity(a, coord_msh)
+    idxs = collect(1 : size(vels)[1])
+    idxs = reshape(idxs, nx, nz)
+
+    points = coord_msh
+    ncells = (nx-1)*(nz-1)
+    cells = Vector{WriteVTK.MeshCell}(undef, ncells)
+    acc = 0
+    for ix = 1 : nx-1
+        for iz = 1 : nz-1
+            acc += 1
+            cells[acc] = WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_QUAD, 
+                [idxs[ix,iz], idxs[ix,iz+1], idxs[ix+1,iz+1], idxs[ix+1,iz]])
+        end
+    end
+
+    vtkfile = WriteVTK.vtk_grid(filename, points', cells)
+    WriteVTK.vtk_point_data(vtkfile, vels', "Velocity")
+    WriteVTK.vtk_save(vtkfile)
 end
