@@ -7,7 +7,7 @@
 # Several methods can be used according to choice of downwash model.
 # downwash_model=
 #   strip_theory: the 3D correction is ignored.
-#   psuedosteady: the 3D correction assumes psuedosteady, like Prandtl.
+#   pseudosteady: the 3D correction assumes pseudosteady, like Prandtl.
 #   streamwise_filaments: the 3D correction only include the streamwise 
 #       vorticity (it oscillates!), but not the wake's spansiwse vorticity.
 #   unsteady: the 3D correction includes all elements of the wake's vorticity
@@ -15,7 +15,7 @@
 #
 # Use:
 #   wing = make_elliptic(StraightAnalyticWing, 4, 4)
-#   prob = HarmonicULLT(1, wing; downwash_model=psuedosteady)
+#   prob = HarmonicULLT(1, wing; downwash_model=pseudosteady)
 #   compute_collocation_points!(prob)
 #   compute_fourier_terms!(prob)
 #   lift_coefficient(prob)
@@ -429,7 +429,7 @@ function integrate_gammaprime_k_term3(
 end
 
 # 3D integral for psuedo-steady problem ========================================
-function integrate_gammaprime_k_psuedosteady(
+function integrate_gammaprime_k_pseudosteady(
     a :: HarmonicULLT, 
     y :: Real, 
     k :: Integer)
@@ -548,8 +548,8 @@ function integrate_gammaprime_k(
         i2 = integrate_gammaprime_k_term2(a, y, k)  # Don't touch - correct.
         i3 = integrate_gammaprime_k_term3(a, y, k)  # Don't touch - correct.
         integral = i1 + i2 + i3
-    elseif( a.downwash_model == psuedosteady )
-        integral = integrate_gammaprime_k_psuedosteady(a, y, k)
+    elseif( a.downwash_model == pseudosteady )
+        integral = integrate_gammaprime_k_pseudosteady(a, y, k)
     elseif( a.downwash_model == streamwise_filaments )
         integral = integrate_gammaprime_k_streamwise_fil(a, y, k)
     elseif( a.downwash_model == strip_theory )
@@ -862,6 +862,24 @@ function bound_vorticity(
         @assert(isfinite(sum))
         sum += sin((2 * i - 1) * theta) * a.fourier_terms[i]
     end
+    @assert(isfinite(sum))
+    return sum
+end
+
+function bound_vorticity_y_derivative(
+    a :: HarmonicULLT,
+    y :: Real)
+
+    @assert(abs(y) <= a.wing.semispan)
+    @assert(a.num_terms >= 1)
+
+    theta = y_to_theta(a, y)
+    sum = 0
+    for i = 1:a.num_terms
+        @assert(isfinite(sum))
+        sum += (2 * i - 1) * cos((2 * i - 1) * theta) * a.fourier_terms[i]
+    end
+    sum /= -sqrt(a.wing.semispan^2 - y^2)
     @assert(isfinite(sum))
     return sum
 end

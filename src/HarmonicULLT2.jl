@@ -165,8 +165,8 @@ function integrate_gammaprime_k_streamwise(
     
     if( a.downwash_model == unsteady )
         integral = integrate_gammaprime_k_streamwise_fil(a, y, k)
-    elseif( a.downwash_model == psuedosteady )
-        integral = integrate_gammaprime_k_psuedosteady(a, y, k)
+    elseif( a.downwash_model == pseudosteady )
+        integral = integrate_gammaprime_k_pseudosteady(a, y, k)
     elseif( a.downwash_model == streamwise_filaments )
         integral = integrate_gammaprime_k_streamwise_fil(a, y, k)
     elseif( a.downwash_model == strip_theory )
@@ -185,7 +185,7 @@ function integrate_gammaprime_k_spanwise(
     
     if( a.downwash_model == unsteady )
         integral = integrate_gammaprime_k_spanwise_fil(a, y, k)
-    elseif( a.downwash_model == psuedosteady )
+    elseif( a.downwash_model == pseudosteady )
         integral = 0
     elseif( a.downwash_model == streamwise_filaments )
         integral = 0
@@ -195,7 +195,7 @@ function integrate_gammaprime_k_spanwise(
     return integral
 end
 
-function integrate_gammaprime_k_streamwise_psuedosteady(
+function integrate_gammaprime_k_streamwise_pseudosteady(
     a :: HarmonicULLT2, 
     y :: Real, 
     k :: Integer)

@@ -9,9 +9,9 @@
 #==============================================================================#
 
 @enum DownwashModel begin
-	# Psuedosteady: no wake "memory" - shed vortex is of const. strength
+	# pseudosteady: no wake "memory" - shed vortex is of const. strength
 	# dGamma/dy
-    psuedosteady = 1
+    pseudosteady = 1
 	
 	# StreamwiseFilaments: The vorticity in the streamwise direction is 
 	# considered, but spanwise vorticity is neglected
