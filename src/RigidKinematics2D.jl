@@ -135,6 +135,13 @@ function pivot_position(a::RigidKinematics2D) :: Float64
     return a.pivot_position
 end
 
+function pivot_coordinate(kinem::RigidKinematics2D, t::Real)
+    pos = [0., 0.]
+    pos[1] = kinem.pivot_position
+    pos[2] = kinem.z_pos(t)
+    return pos
+end
+
 # IO ---------------------------------------------------------------------------
 
 function csv_titles(a::RigidKinematics2D)
