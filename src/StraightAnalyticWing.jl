@@ -48,6 +48,22 @@ function make_van_dyke_cusped(
     return StraightAnalyticWing(semispan, fn)
 end
 
+function make_tapered(
+    ::Type{StraightAnalyticWing}, 
+    aspect_ratio :: Real, span :: Real, taper_ratio
+    ) :: StraightAnalyticWing
+
+    @assert(taper_ratio > 0.)
+    meanchord = span / aspect_ratio
+    rootchord = 2 * meanchord / (1 + taper_ratio)
+    tipchord = rootchord * taper_ratio
+    gradient = 2 * (tipchord - rootchord) / span
+    fn = y -> rootchord + gradient * abs(y)
+    semispan = span / 2
+    return StraightAnalyticWing(semispan, fn)
+end
+
+
 function aspect_ratio(a :: StraightAnalyticWing)
     wa = area(a)
     return 4 * a.semispan ^ 2 / wa
