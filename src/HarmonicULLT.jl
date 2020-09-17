@@ -811,7 +811,7 @@ function associated_a0_term_pitch(
     U = a.free_stream_vel
     k = omega * a.wing.chord_fn(y) / (2 * U)
     Ck = theodorsen_fn(k)
-    t1 = Ck * (1 - im * omega * chord / (4 * U))
+    t1 = Ck * (1 + im * omega * chord / (4 * U))
     t2 = - im * omega * chord / (4 * U)
     return t1 + t2
 end
@@ -826,7 +826,8 @@ function associated_a0_term_heave(
     U = a.free_stream_vel
     k = omega * a.wing.chord_fn(y) / (2 * U)
     Ck = theodorsen_fn(k)
-    t1 = - Ck * im * omega / U
+    # t1 = - Ck * im * omega / U
+    t1 = - im * omega * Ck / U # Multiplied by meters to get actual a0.
     return t1
 end
 
