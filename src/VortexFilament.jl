@@ -60,16 +60,12 @@ function to_vortex_particles(
     @assert(length(fil_str) == size(fil_start)[1])
     @assert(particle_separation > 0)
 
-    #psep_recip = 1 / particle_separation
+    psep_recip = 1 / particle_separation
     nfils = length(fil_str)
-    fil_lengths = zeros(nfils)
     nparticles = zeros(Int64, nfils)
-    for i = 1:nfils
-        dir = fil_end[i,:] - fil_start[i,:]
-        len = sqrt(dir[1]^2 + dir[2]^2 + dir[3]^2)
-        fil_lengths[i] = len
-        nparticles[i] = Int64(ceil(len / particle_separation))
-    end
+    dir = fil_end - fil_start
+    fil_lengths = @fastmath sqrt.(dir[:,1].^2 + dir[:,2].^2 + dir[:,3].^2)
+    nparticles = Int64.(ceil.(fil_lengths .* psep_recip))
     n_tot_particles = sum(nparticles)
     offsets = zeros(Int64, n_tot_particles)
     particle_locs = zeros(Float32, n_tot_particles, 3)
@@ -78,15 +74,15 @@ function to_vortex_particles(
     for i = 2:nfils
         offsets[i] = offsets[i - 1] + nparticles[i - 1]
     end
-    for i = 1 : nfils
-        dir = fil_end[i,:] - fil_start[i,:]
+    @simd for i = 1 : nfils
         np = nparticles[i]
+        rnp = 1 / np
         @assert(np > 0)
         offset = offsets[i] 
         particle_strs[offset:offset + np - 1, :] = 
-            repeat(dir'; inner = (np, 1)) * fil_str[i] / np
-        for j = 1 : np
-            particle_locs[offset + j - 1, :] = fil_start[i, :] + (j - 0.5) * dir / np
+            repeat(dir[i,:]' .* fil_str[i] * rnp; inner = (np, 1)) 
+        @simd for j = 1 : np
+            particle_locs[offset + j - 1, :] = fil_start[i, :] + (j - 0.5) * dir[i,:] * rnp
         end
     end 
 
