@@ -37,6 +37,16 @@ function BufferedParticleWake(
         lattice=lattice, edge_fil_strs=edge_fil_strs)
 end
 
+function num_vertices(
+    a::BufferedParticleWake;
+    include_tether=true) :: Int64
+    npv = num_particles(a.wake_particles)
+    slb = size(a.lattice_buffer.vertices)
+    nfv = slb[1] * slb[2]
+    @assert(slb[3] == 3)
+    return nfv + npv
+end
+
 function get_vertices(
     a::BufferedParticleWake;
     include_tether=true) :: Matrix{Float64}
