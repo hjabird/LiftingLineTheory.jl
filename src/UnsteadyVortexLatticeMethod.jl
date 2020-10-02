@@ -1,3 +1,11 @@
+#
+# UnsteadyVortexLatticeMethod.jl
+#
+# Unsteady Vortex Lattice Method
+#
+# Copyright HJAB 2020
+#
+################################################################################
 
 mutable struct UnsteadyVortexLatticeMethod
     free_stream_vel :: Float64

@@ -1,3 +1,11 @@
+#
+# UnsteadyVortexLatticeMethod2D.jl
+#
+# A 2D Unsteady Vortex Lattice Method
+#
+# Copyright HJAB 2020
+#
+################################################################################
 
 mutable struct UnsteadyVortexLatticeMethod2D
 
@@ -358,11 +366,9 @@ function compute_foil_vortex_strengths!(
             UnsteadyVortexLatticeMethod2D, rs_levs)
         a.le_wake.vorts = vorts_lew
         a.le_shed_on_last_step = true
-        println("LE Vort: ", a.foil_lattice.vorts[1]+a.le_wake.vorts[end])
     else
         vorts = vorts_from_ring_strengths(
             UnsteadyVortexLatticeMethod2D, ring_strengths)
-        println("LE Vort: ", a.foil_lattice.vorts[1]+a.le_wake.vorts[end])
         a.foil_lattice.vorts = vorts    # We have to set this
                                         # so we know to use +ve or -ve
                                         # LE vort.
@@ -375,7 +381,6 @@ function compute_foil_vortex_strengths!(
 
     if !shedding_le
         vels = field_velocity(a, centres)
-        display(cat(centres, normals, vels; dims=2))
     end
 
     return
