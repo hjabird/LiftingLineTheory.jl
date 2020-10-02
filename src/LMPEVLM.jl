@@ -1,3 +1,11 @@
+#
+# LMPEVLM.jl
+#
+# L(ESP) Modulated Particle Enhanced Vortex Lattice Method
+#
+# Copyright HJAB 2020
+#
+################################################################################
 
 mutable struct LMPEVLM
     free_stream_vel :: Float64
@@ -7,8 +15,10 @@ mutable struct LMPEVLM
     wing_lattice :: VortexLattice       
     old_wing_lattice :: VortexLattice
 
-    te_wake :: BufferedParticleWake
-    le_wake :: BufferedParticleWake
+    te_wake :: BufferedParticleWake # trailing edge wake
+    le_wake :: BufferedParticleWake # Leading edge wake
+    lt_wake :: BufferedParticleWake # Left tip wake
+    rt_wake :: BufferedParticleWake # Right tip wake
 
     critical_le_vorticity :: Vector{Float64}
 	kinematic_viscocity :: Float64
@@ -31,7 +41,8 @@ mutable struct LMPEVLM
         critical_le_vorticity :: Vector{Float64} = zeros(0),
 		kinematic_viscocity :: Float64 = 0.,
         regularisation_radius :: Float64 = -1.,
-        regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation())
+        regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation()
+        ) :: LMPEVLM
 
         szw = size(ref_wing_lattice.vertices)
         wing_lattice = VortexLattice(zeros(szw))
@@ -40,6 +51,7 @@ mutable struct LMPEVLM
         new(free_stream_vel, kinematics,
             ref_wing_lattice,
             wing_lattice, old_wing_lattice, 
+            BufferedParticleWake(), BufferedParticleWake(),
             BufferedParticleWake(), BufferedParticleWake(),
             critical_le_vorticity, kinematic_viscocity,
             regularisation_radius, regularisation_kernel,
@@ -55,12 +67,11 @@ function LMPEVLM(
     current_time :: Float64 = 0.,
     wing_discretisation_chordwise::Vector{<:Real}=collect(range(-1, 1; length=20)), 
     wing_discretisation_spanwise::Vector{<:Real}=cos.(range(0, pi; length=40)),
-    a0_critical :: Float64 = -1,
-	kinematic_viscocity :: Float64 = 0,
-    regularisation_radius :: Float64 = -1.,
+    a0_critical :: Float64 = -1.0,
+	kinematic_viscocity :: Float64 = 0.0,
+    regularisation_radius :: Float64 = -1.0,
     regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation()
     ) :: LMPEVLM
-
 
     ## GEOMETRY
     function geom_fn(x,y)
@@ -87,7 +98,7 @@ function LMPEVLM(
     end
 
     if a0_critical == -1
-        critical_le_vorticity = fill(9e99, size(ref_lattice)[1])
+        critical_le_vorticity = fill(9e99, extent_i(ref_lattice))
     else
         dx1 = ref_lattice.vertices[:,2,1] - ref_lattice.vertices[:,1,1]
         dx1 = (dx1[1:end-1] + dx1[2:end]) / 2
@@ -127,6 +138,9 @@ function advance_one_step(a::LMPEVLM) :: Nothing
     update_wing_lattice!(a)
     update_wake_lattice!(a; buffer_rows=5)
     compute_wing_vortex_strengths!(a)
+    if num_particles(a.te_wake.wake_particles) > 500000
+        @error("Probably blown up!")
+    end
     return
 end
 
@@ -136,61 +150,78 @@ function convect_wake!(a::LMPEVLM) :: Nothing
     check(a.te_wake; do_assert=true)
     check(a.le_wake; do_assert=true)
 
-    # Get vorticity sources.
-    p_locs_te, p_vorts_te = get_vortex_particles(a.te_wake)
-    p_locs_le, p_vorts_le = get_vortex_particles(a.le_wake)
-    nptcls_te = size(p_locs_te)[1]
-    nptcls_le = size(p_locs_le)[1]
-    p_locs = cat(p_locs_te, p_locs_le; dims=1)
-    p_vorts = cat(p_vorts_te, p_vorts_le; dims=1)
-
-    te_points = get_vertices(a.te_wake)
-    le_points = get_vertices(a.le_wake)
-    npts_te = size(te_points)[1]
-    npts_le = size(le_points)[1]
-    println("NumTE: ", npts_te)
-    println("NumLE: ", npts_le)
-    conv_points = cat(te_points, le_points; dims=1)
-
-    pa_locs, pa_vorts = everything_as_particles(a)
-    @assert(size(pa_locs) == size(pa_vorts))
-    @assert(all(isfinite.(p_vorts)))
-
-    # We're going to use and RK2 scheme, without correcting wing ring strength.
-    vels = CVortex.particle_induced_velocity(
-        pa_locs, pa_vorts, conv_points,
-        a.regularisation_kernel, a.regularisation_radius)
-    @assert(all(isfinite.(vels)))
-    vels[:,1] .+= a.free_stream_vel
-
-    p_dvorts = CVortex.particle_induced_dvort(
-        pa_locs, pa_vorts, p_locs, p_vorts,
-        a.regularisation_kernel, a.regularisation_radius)
-    @assert(all(isfinite.(p_dvorts)))
-	# Assume that we've redistributed with spacing of reg. dist.
-	p_visc_dvorts = zeros(size(p_dvorts))
-	if a.kinematic_viscocity != 0
-		p_visc_dvorts = CVortex.particle_visc_induced_dvort(
-			pa_locs, pa_vorts, ones(size(pa_locs)[1]) * a.regularisation_radius^3,
-			p_locs, p_vorts, ones(size(p_locs)[1]) * a.regularisation_radius^3,
-			a.regularisation_kernel, a.regularisation_radius, a.kinematic_viscocity)
-	end
-    @assert(all(isfinite.(p_dvorts)))
-
-    dt = a.dt
-    # Set new near wake geometry
-    new_points = conv_points + vels .* dt
-    check(a.te_wake; do_assert=true)
-    check(a.le_wake; do_assert=true)
-    
-    #@assert(size(te_points2)==size(te_points))
-    println("NewPts: ", size(new_points))
-    set_vertices!(a.te_wake, new_points[1:npts_te,:])
-    set_vertices!(a.le_wake, new_points[npts_te+1:npts_te+npts_le,:])
-    # Set new particle wake vorts.
-	dvort = p_visc_dvorts + p_dvorts
-    a.te_wake.wake_particles.vorts += dvort[1:nptcls_te,:] .* dt
-    a.le_wake.wake_particles.vorts += dvort[nptcls_te+1:nptcls_te+nptcls_le,:] .* dt
+    nte_vorts = num_particles(a.te_wake.wake_particles)
+    nle_vorts = num_particles(a.le_wake.wake_particles)
+    nlt_vorts = num_particles(a.lt_wake.wake_particles)
+    nrt_vorts = num_particles(a.rt_wake.wake_particles)
+    nte_verts = num_vertices(a.te_wake)
+    nle_verts = num_vertices(a.le_wake)
+    nlt_verts = num_vertices(a.lt_wake)
+    nrt_verts = num_vertices(a.rt_wake)
+    function get_dpoints()
+        return vcat(
+            get_vertices(a.te_wake), get_vertices(a.le_wake),
+            get_vertices(a.lt_wake), get_vertices(a.rt_wake))
+    end
+    function get_dvorts()
+        ~, p_vorts_te = get_vortex_particles(a.te_wake)
+        ~, p_vorts_le = get_vortex_particles(a.le_wake)
+        ~, p_vorts_lt = get_vortex_particles(a.lt_wake)
+        ~, p_vorts_rt = get_vortex_particles(a.rt_wake)
+        vorts = vcat(p_vorts_te, p_vorts_le, p_vorts_lt, p_vorts_rt)
+        return vorts
+    end
+    function set_dpoints(new_points)
+        set_vertices!(a.te_wake, new_points[1:nte_verts,:])
+        set_vertices!(a.le_wake, new_points[
+            nte_verts+1:nte_verts+nle_verts,:])
+        set_vertices!(a.lt_wake, new_points[
+            nte_verts+nle_verts+1:nte_verts+nle_verts+nlt_verts,:])
+        set_vertices!(a.rt_wake, new_points[
+            nte_verts+nle_verts+nlt_verts+1:end,:])
+        return
+    end
+    function set_dvorts(new_vorts)
+        a.te_wake.wake_particles.vorts = new_vorts[1:nte_vorts,:]
+        a.le_wake.wake_particles.vorts = new_vorts[
+            nte_vorts+1:nte_vorts+nle_vorts,:]
+        a.lt_wake.wake_particles.vorts = new_vorts[
+            nte_vorts+nle_vorts+1:nte_vorts+nle_vorts+nlt_vorts,:]
+        a.rt_wake.wake_particles.vorts = new_vorts[
+            nte_vorts+nle_vorts+nlt_vorts+1:end,:]
+        return
+    end
+    function vel_method()
+        return field_velocity(a, 
+            vcat(
+            get_vertices(a.te_wake), get_vertices(a.le_wake),
+            get_vertices(a.lt_wake), get_vertices(a.rt_wake)))
+    end
+    function dvort_method() 
+        p_locs_te, p_vorts_te = get_vortex_particles(a.te_wake)
+        p_locs_le, p_vorts_le = get_vortex_particles(a.le_wake)
+        p_locs_lt, p_vorts_lt = get_vortex_particles(a.lt_wake)
+        p_locs_rt, p_vorts_rt = get_vortex_particles(a.rt_wake)
+        p_vorts = vcat(p_vorts_te, p_vorts_le, p_vorts_lt, p_vorts_rt)
+        p_locs = vcat(p_locs_te, p_locs_le, p_locs_lt, p_locs_rt)
+        p_locse, p_vortse = everything_as_particles(a)
+        p_dvorts = CVortex.particle_induced_dvort(
+            p_locse, p_vortse, 
+            p_locs, p_vorts,
+            a.regularisation_kernel, a.regularisation_radius)  
+        if a.kinematic_viscocity != 0
+            vol = (a.regularisation_radius * (1/1.5))^3 # Should be consistent w/ remeshing
+            CVortex.particle_visc_induced_dvort(p_locs, p_vorts,
+                vol, p_locs, p_vorts,
+                vol, a.regularisation_kernel, a.regularisation_radius,
+                a.kinematic_viscocity)
+        end
+        return p_dvorts
+    end
+    ode = PointsVortsODE(
+        get_dpoints, get_dvorts, vel_method, dvort_method,
+        set_dpoints, set_dvorts )
+    runge_kutta_4_step(ode, a.dt)
     return
 end
 
@@ -215,6 +246,7 @@ function update_wake_lattice!(
     buffer_rows::Int=1) :: Nothing
     update_te_wake_lattice!(a; buffer_rows=buffer_rows)
     update_le_wake_lattice!(a; buffer_rows=buffer_rows)
+    update_tip_wake_lattices!(a; buffer_rows=buffer_rows)
     return
 end 
 
@@ -255,6 +287,25 @@ function update_le_wake_lattice!(a::LMPEVLM; buffer_rows::Int=1) :: Nothing
 end 
 
 
+function update_tip_wake_lattices!(a::LMPEVLM; buffer_rows::Int=1) :: Nothing
+    # On one tip we have to do -ve strengths
+    lt_wake_verts = reshape(a.wing_lattice.vertices[1,:,:],:,3)
+    add_new_buffer_row!(a.lt_wake, lt_wake_verts)
+    a.lt_wake.lattice_buffer.strengths[:, end] = -a.wing_lattice.strengths[1, :]
+    buffer_to_particles(a.lt_wake,
+        2 * a.regularisation_radius / 2.0;  # Particle separation.
+        buffer_rows=buffer_rows)
+
+    rt_wake_verts = reshape(a.wing_lattice.vertices[end,:,:],:,3)
+    add_new_buffer_row!(a.rt_wake, rt_wake_verts)
+    a.rt_wake.lattice_buffer.strengths[:, end] = a.wing_lattice.strengths[end, :]
+    buffer_to_particles(a.rt_wake,
+        2 * a.regularisation_radius / 2.0;  # Particle separation.
+        buffer_rows=buffer_rows)
+    return
+end 
+
+
 function initialise_wake!(a::LMPEVLM) :: Nothing
     # The trailing edge wake
     ni, nj = size(a.wing_lattice.strengths);
@@ -268,7 +319,6 @@ function initialise_wake!(a::LMPEVLM) :: Nothing
     verts_le = wing_le_position(LMPEVLM, a.wing_lattice)
     vel = -wing_surface_velocity(a, verts_le)
     vel[:, 1] .+= a.free_stream_vel
-
     free_edge = verts_le + a.dt * vel * 1.5
     lattice_verts = cat(
         reshape(free_edge, ni+1, 1, 3),
@@ -277,6 +327,29 @@ function initialise_wake!(a::LMPEVLM) :: Nothing
         dims=2)
     a.le_wake.lattice_buffer = VortexLattice(lattice_verts)
     a.le_wake.edge_fil_strs = zeros(ni)
+
+    # The wing tips
+    verts_flt = a.wing_lattice.vertices[1:1,:,:]
+    vel = -wing_surface_velocity(a, verts_flt[1,:,:])
+    vel[:, 1] .+= a.free_stream_vel
+    free_edge = verts_flt[1,:,:] + a.dt * vel * 1.5
+    lattice_verts = cat(
+        reshape(free_edge, nj+1, 1, 3),
+        reshape(verts_flt, nj+1, 1, 3); 
+        dims=2)
+    a.lt_wake.lattice_buffer = VortexLattice(lattice_verts)
+    a.lt_wake.edge_fil_strs = zeros(nj)
+
+    verts_frt = a.wing_lattice.vertices[end:end,:,:]
+    vel = -wing_surface_velocity(a, verts_frt[1,:,:])
+    vel[:, 1] .+= a.free_stream_vel
+    free_edge = verts_frt[1,:,:] + a.dt * vel * 1.5
+    lattice_verts = cat(
+        reshape(free_edge, nj+1, 1, 3),
+        reshape(verts_frt, nj+1, 1, 3); 
+        dims=2)
+    a.rt_wake.lattice_buffer = VortexLattice(lattice_verts)
+    a.rt_wake.edge_fil_strs = zeros(nj)
 
     check(a.wing_lattice; do_assert=true)
     return
@@ -340,7 +413,7 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
 
     # Shedding LE mask determines the point on the LE where we we impose 
     # the LESP criterion.
-    ni_w, ~ = size(a.wing_lattice.strengths)
+    ni_w, nj_w = size(a.wing_lattice.strengths)
     ni_le, nj_le = size(a.le_wake.lattice_buffer.strengths)
     @assert(ni_le == ni_w)
     shedding_le_mask = fill(false, ni_w)
@@ -356,6 +429,9 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
     le_inf_mat = mapreduce(
         i->le_inf_matx[:,le_ring_idxs[i,1]]+le_inf_matx[:,le_ring_idxs[i,2]],
         vcat, [1:ni_le])
+
+    # We don't need to do anything with the wing tips unless we want
+    # to do a critical A0 kind of thing.
     
     # Get const influences from the near_wake and free stream.
     ext_vel = nonwing_ind_vel(a, centres)
@@ -421,19 +497,23 @@ function nonwing_ind_vel(
     # 1st two rows of LE should be zeroed at this point so we don't have
     # to extract them.
     flew_starts, flew_ends, flew_strs = get_filaments( a.le_wake )
-    fstarts = cat(ftew_starts, flew_starts; dims=1)
-    fends = cat(ftew_ends, flew_ends; dims=1)
-    fstrs = cat(ftew_strs, flew_strs; dims=1)
+    fltw_starts, fltw_ends, fltw_strs = get_filaments( a.lt_wake )
+    frtw_starts, frtw_ends, frtw_strs = get_filaments( a.rt_wake )
+    fstarts = cat(ftew_starts, flew_starts, fltw_starts, frtw_starts; dims=1)
+    fends = cat(ftew_ends, flew_ends, fltw_ends, frtw_ends; dims=1)
+    fstrs = cat(ftew_strs, flew_strs, fltw_strs, frtw_strs; dims=1)
     near_wake_ind_vel = CVortex.filament_induced_velocity(
         fstarts, fends, fstrs, points )
     ext_vel += near_wake_ind_vel
     # Influence of particle wake.
     p_tlocs, p_tvorts = get_vortex_particles(a.te_wake)
     p_llocs, p_lvorts = get_vortex_particles(a.le_wake)
+    p_ltlocs, p_ltvorts = get_vortex_particles(a.lt_wake)
+    p_rtlocs, p_rtvorts = get_vortex_particles(a.rt_wake)
     ext_vel += CVortex.particle_induced_velocity(
-        cat(p_tlocs, p_llocs; dims=1), 
-        cat(p_tvorts, p_lvorts; dims=1), points,
-        CVortex.singular_regularisation(), a.regularisation_radius/8)
+        cat(p_tlocs, p_llocs, p_ltlocs, p_rtlocs; dims=1), 
+        cat(p_tvorts, p_lvorts, p_ltvorts, p_rtvorts; dims=1), points,
+        CVortex.singular_regularisation(), a.regularisation_radius)
     @assert(all(isfinite.(ext_vel)), 
         "Non-finite value in external induced vels.")
     return ext_vel
@@ -447,17 +527,26 @@ function everything_as_particles(
     fwi_starts, fwi_ends, fwi_str = to_filaments(a.wing_lattice)
     fwa_starts, fwa_ends, fwa_str = get_filaments(a.te_wake)
     flewa_starts, flewa_ends, flewa_str = get_filaments(a.le_wake)
-    f_starts = cat(fwi_starts, flewa_starts, fwa_starts; dims=1)
-    f_ends = cat(fwi_ends, flewa_ends, fwa_ends; dims=1)
-    f_str = cat(fwi_str, flewa_str, fwa_str; dims=1)
+    fltwa_starts, fltwa_ends, fltwa_str = get_filaments(a.lt_wake)
+    frtwa_starts, frtwa_ends, frtwa_str = get_filaments(a.rt_wake)
+    f_starts = cat(fwi_starts, flewa_starts, fltwa_starts, 
+        frtwa_starts, fwa_starts; dims=1)
+    f_ends = cat(fwi_ends, flewa_ends, fltwa_ends, 
+        frtwa_ends, fwa_ends; dims=1)
+    f_str = cat(fwi_str, flewa_str, fltwa_str, 
+        frtwa_str, fwa_str; dims=1)
     # Turn the filaments into particles so that our problem
     # doesn't explode.
     p_locs_f, p_vorts_f = to_vortex_particles( VortexFilament,
         f_starts, f_ends, f_str, a.regularisation_radius )
     p_locs_te, p_vorts_te = get_vortex_particles(a.te_wake)
     p_locs_le, p_vorts_le = get_vortex_particles(a.le_wake)
-    p_locs = cat(p_locs_te, p_locs_le, p_locs_f; dims=1)
-    p_vorts = cat(p_vorts_te, p_vorts_le, p_vorts_f; dims=1)
+    p_locs_lt, p_vorts_lt = get_vortex_particles(a.lt_wake)
+    p_locs_rt, p_vorts_rt = get_vortex_particles(a.rt_wake)
+    p_locs = cat(p_locs_te, p_locs_le, p_locs_lt, 
+        p_locs_rt, p_locs_f; dims=1)
+    p_vorts = cat(p_vorts_te, p_vorts_le, p_vorts_lt, 
+        p_vorts_rt, p_vorts_f; dims=1)
     return p_locs, p_vorts
 end
 
@@ -529,6 +618,49 @@ function wing_le_position(
 end
 
 
+function transfer_all_particles_to_te_wake!(a::LMPEVLM)
+    tepos, tevort = get_vortex_particles(a.te_wake)
+    lepos, levort = get_vortex_particles(a.le_wake)
+    ltpos, ltvort = get_vortex_particles(a.lt_wake)
+    rtpos, rtvort = get_vortex_particles(a.rt_wake)
+    pos = vcat(tepos, lepos, ltpos, rtpos)
+    vort = vcat(tevort, levort, ltvort, rtvort)
+    a.te_wake.wake_particles.positions=pos 
+    a.te_wake.wake_particles.vorts=vort
+    a.le_wake.wake_particles.positions=zeros(0,3)
+    a.le_wake.wake_particles.vorts=zeros(0,3)
+    a.lt_wake.wake_particles.positions=zeros(0,3)
+    a.lt_wake.wake_particles.vorts=zeros(0,3)
+    a.rt_wake.wake_particles.positions=zeros(0,3)
+    a.rt_wake.wake_particles.vorts=zeros(0,3)
+    return
+end
+
+function redistribute_wake!(a::LMPEVLM)
+    transfer_all_particles_to_te_wake!(a)
+    p_locs, p_vorts = get_vortex_particles(a.te_wake)
+    nppos, npvort, ~ = CVortex.redistribute_particles_on_grid(
+        p_locs, p_vorts, 
+        CVortex.lambda3_redistribution(),
+        a.regularisation_radius * (1/1.5); # Needs to be consistent w/ dvort
+        negligible_vort=0.25)
+    a.te_wake.wake_particles.positions = nppos;
+    a.te_wake.wake_particles.vorts = npvort
+    return;
+end
+
+function relax_wake!(a::LMPEVLM; 
+    relaxation_parameter::Float64=0.3) :: Nothing
+    transfer_all_particles_to_te_wake!(a)
+    p_locs, p_vorts = get_vortex_particles(a.te_wake)
+    npvort= CVortex.particle_pedrizzetti_relaxation(
+        p_locs, p_vorts, relaxation_parameter,
+        a.regularisation_kernel, a.regularisation_radius )
+    a.te_wake.wake_particles.vorts = npvort
+    return;
+end
+
+
 #= IO FUNCTIONS =============================================================#
 
 function to_vtk(a::LMPEVLM,
@@ -538,9 +670,13 @@ function to_vtk(a::LMPEVLM,
     wingfile = filename_start * "_wing_" * string(file_no)
     te_wakefile = filename_start * "_tewake_" * string(file_no)
     le_wakefile = filename_start * "_lewake_" * string(file_no)
+    lt_wakefile = filename_start * "_ltwake_" * string(file_no)
+    rt_wakefile = filename_start * "_rtwake_" * string(file_no)
     to_vtk(a.wing_lattice, wingfile; translation=translation)
     to_vtk(a.te_wake, te_wakefile; translation=translation)
     to_vtk(a.le_wake, le_wakefile; translation=translation)
+    to_vtk(a.lt_wake, lt_wakefile; translation=translation)
+    to_vtk(a.rt_wake, rt_wakefile; translation=translation)
     return
 end
 
@@ -579,12 +715,36 @@ end
 
 function export_vorticity_field(
     a::LMPEVLM, 
-    filename::String, 
-    resolution::Float64) :: Nothing
+    filename::String;
+    resolution::Float64=-1.0,
+    bounds=[]) :: Nothing
 
-    xs = collect(-1:resolution:2)
-    ys = collect(-2:resolution:2)
-    zs = collect(-1:resolution:1)
+    if resolution == -1.0
+        resolution = a.regularisation_radius / 3
+    end
+    if length(bounds) == 0
+        pts = a.te_wake.wake_particles.positions
+        pts = vcat(pts, get_vertices(a.wing_lattice))
+        pts = vcat(pts, a.le_wake.wake_particles.positions)
+        pts = vcat(pts, a.lt_wake.wake_particles.positions)
+        pts = vcat(pts, a.rt_wake.wake_particles.positions)
+        bounds = [
+            minimum(pts[:,1]), maximum(pts[:,1]),
+            minimum(pts[:,2]), maximum(pts[:,2]),
+            minimum(pts[:,3]), maximum(pts[:,3])]
+    end
+    @assert(resolution > 0)
+    @assert(length(bounds) == 6)
+    @assert(all(isfinite.(bounds)))
+    res = resolution
+
+    xs = collect(bounds[1]-res:res:bounds[2]+res)
+    ys = collect(bounds[3]-res:res:bounds[4]+res)
+    zs = collect(bounds[5]-res:res:bounds[6]+res)
+    println(bounds)
+    @assert(length(xs)>1)
+    @assert(length(ys)>1)
+    @assert(length(zs)>1)
     nx = length(xs)
     ny = length(ys)
     nz = length(zs)
