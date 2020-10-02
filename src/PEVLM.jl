@@ -1,3 +1,11 @@
+#
+# PEVLM.jl
+#
+# Particle Enhanced Vortex Lattice Method
+#
+# Copyright HJAB 2020
+#
+################################################################################
 
 mutable struct PEVLM
     free_stream_vel :: Float64
@@ -85,13 +93,15 @@ function advance_one_step(a::PEVLM) :: Nothing
         initialise_wake!(a)
         a.initialised = true
     end
-
     a.current_time += a.dt
     convect_wake!(a)
     a.old_wing_lattice = a.wing_lattice
     update_wing_lattice!(a)
-    update_wake_lattice!(a; buffer_rows=999)
+    update_wake_lattice!(a; buffer_rows=5)
     compute_wing_vortex_strengths!(a)
+    if num_particles(a.te_wake.wake_particles) > 500000
+        throw(ErrorException("Probably blown up!"))
+    end
     return
 end
 
@@ -100,37 +110,38 @@ function convect_wake!(a::PEVLM) :: Nothing
     check(a.wing_lattice; do_assert=true)
     check(a.te_wake; do_assert=true)
 
-    # Get vorticity sources.
-    fwi_starts, fwi_ends, fwi_str = to_filaments(a.wing_lattice)
-    fwa_starts, fwa_ends, fwa_str = get_filaments(a.te_wake)
-    f_starts = cat(fwi_starts, fwa_starts; dims=1)
-    f_ends = cat(fwi_ends, fwa_ends; dims=1)
-    f_str = cat(fwi_str, fwa_str; dims=1)
-    p_locs, p_vorts = get_vortex_particles(a.te_wake)
-    @assert(all(isfinite.(p_vorts)))
+    function get_dpoints()
+        return get_vertices(a.te_wake)
+    end
+    function get_dvorts()
+        locs, vorts = get_vortex_particles(a.te_wake)
+        return vorts
+    end
+    function set_dpoints(new_te_points)
+        set_vertices!(a.te_wake, new_te_points)
+        return
+    end
+    function set_dvorts(new_vorts)
+        a.te_wake.wake_particles.vorts = new_vorts
+    end
+    function vel_method()
+        return field_velocity(a, get_vertices(a.te_wake);
+            regularise_filaments=true)
+    end
+    function dvort_method() 
+        p_locs, p_vorts = get_vortex_particles(a.te_wake)
+        p_locse, p_vortse = everything_as_particles(a)
+        p_dvorts = CVortex.particle_induced_dvort(
+            p_locse, p_vortse, 
+            p_locs, p_vorts,
+            a.regularisation_kernel, a.regularisation_radius)  
+        return p_dvorts
+    end
 
-    te_points = get_vertices(a.te_wake)
-
-    # Get particle wake vels + dvorts.
-    p_dvorts = filament_induced_dvort(
-        f_starts, f_ends, f_str, p_locs, p_vorts )
-    @assert(all(isfinite.(p_dvorts)), "A non-finite rate of change "*
-        "of vorticity was induced on the wake particles.")
-    p_dvorts = CVortex.particle_induced_dvort(
-        p_locs, p_vorts, 
-        p_locs, p_vorts,
-        a.regularisation_kernel, a.regularisation_radius)
-    @assert(all(isfinite.(p_dvorts)), "A non-finite rate of change "*
-        "of vorticity was induced on the wake particles.")
-
-    te_vels = field_velocity(a, te_points)
-
-    dt = a.dt
-    # Set new near wake geometry
-    new_te_points = te_points + te_vels .* dt
-    set_vertices!(a.te_wake, new_te_points)
-    # Set new particle wake vorts.
-    a.te_wake.wake_particles.vorts += p_dvorts .* dt
+    ode = PointsVortsODE(
+        get_dpoints, get_dvorts, vel_method, dvort_method,
+        set_dpoints, set_dvorts )
+    runge_kutta_2_step(ode, a.dt)
     return
 end
 
@@ -237,18 +248,14 @@ function nonwing_ind_vel(
     p_locs, p_vorts = get_vortex_particles(a.te_wake)
     ext_vel += CVortex.particle_induced_velocity(
         p_locs, p_vorts, points,
-        a.regularisation_kernel, a.regularisation_radius/8)
+        a.regularisation_kernel, a.regularisation_radius)
     @assert(all(isfinite.(ext_vel)), 
         "Non-finite value in external induced vels.")
     return ext_vel
 end
 
-function field_velocity(
-    a::PEVLM,
-    points :: Matrix{Float64}
-    ) :: Matrix{Float64}
-    @assert(size(points)[2] == 3)
-    @assert(all(isfinite.(points)), "Non-finite input point.")
+function everything_as_particles(
+    a::PEVLM) :: Tuple{Matrix{Float32}, Matrix{Float32}}
 
     # Get vorticity sources.
     fwi_starts, fwi_ends, fwi_str = to_filaments(a.wing_lattice)
@@ -256,22 +263,90 @@ function field_velocity(
     f_starts = cat(fwi_starts, fwa_starts; dims=1)
     f_ends = cat(fwi_ends, fwa_ends; dims=1)
     f_str = cat(fwi_str, fwa_str; dims=1)
-    p_locs, p_vorts = get_vortex_particles(a.te_wake)
-    @assert(all(isfinite.(p_vorts)))
+    # Turn the filaments into particles so that our problem
+    # doesn't explode.
+    p_locs_f, p_vorts_f = to_vortex_particles( VortexFilament,
+        f_starts, f_ends, f_str, a.regularisation_radius )
+    p_locs_te, p_vorts_te = get_vortex_particles(a.te_wake)
+    p_locs = cat(p_locs_te, p_locs_f; dims=1)
+    p_vorts = cat(p_vorts_te, p_vorts_f; dims=1)
+    return p_locs, p_vorts
+end
 
-    # Get near wake lattice vel.
-    vels = filament_induced_velocity(f_starts, f_ends, f_str, points)
-    @assert(all(isfinite.(vels)))
+function field_velocity(
+    a::PEVLM,
+    points :: Matrix{Float64};
+    regularise_filaments=false
+    ) :: Matrix{Float64}
+    @assert(size(points)[2] == 3)
+    @assert(all(isfinite.(points)), "Non-finite input point(s).")
+
+    if regularise_filaments
+        p_locs, p_vorts = everything_as_particles(a)
+        @assert(all(isfinite.(p_vorts)))
+        vels = CVortex.particle_induced_velocity(
+            p_locs, p_vorts, points,
+            a.regularisation_kernel, a.regularisation_radius)
+        @assert(all(isfinite.(vels)))
+    else
+        # Get vorticity sources.
+        fwi_starts, fwi_ends, fwi_str = to_filaments(a.wing_lattice)
+        fwa_starts, fwa_ends, fwa_str = get_filaments(a.te_wake)
+        f_starts = cat(fwi_starts, fwa_starts; dims=1)
+        f_ends = cat(fwi_ends, fwa_ends; dims=1)
+        f_str = cat(fwi_str, fwa_str; dims=1)
+        p_locs, p_vorts = get_vortex_particles(a.te_wake)
+        @assert(all(isfinite.(p_vorts)))
+
+        # Get near wake lattice vel.
+        vels = filament_induced_velocity(f_starts, f_ends, f_str, points)
+        @assert(all(isfinite.(vels)))
+        vels += CVortex.particle_induced_velocity(
+            p_locs, p_vorts, points,
+            a.regularisation_kernel, a.regularisation_radius)
+        @assert(all(isfinite.(vels)))
+    end
     vels[:,1] .+= a.free_stream_vel
-    @assert(all(isfinite.(vels)))
-    vels += CVortex.particle_induced_velocity(
-        p_locs, p_vorts, points,
-        a.regularisation_kernel, a.regularisation_radius/8)
     @assert(all(isfinite.(vels)))
 
     return vels
 end
 
+function field_vorticity(
+    a::PEVLM,
+    mes_locs::Matrix{Float32}) :: Matrix{Float32}
+
+    p_locs, p_vorts = everything_as_particles(a)
+    @assert(all(isfinite.(p_vorts)))
+
+    vorts = CVortex.particle_field_vorticity(
+        p_locs, p_vorts, mes_locs,
+        a.regularisation_kernel, a.regularisation_radius)
+    @assert(all(isfinite.(vorts)))
+    return vorts
+end
+
+function redistribute_wake!(a::PEVLM)
+    p_locs, p_vorts = get_vortex_particles(a.te_wake)
+    nppos, npvort, ~ = CVortex.redistribute_particles_on_grid(
+        p_locs, p_vorts, 
+        CVortex.lambda3_redistribution(),
+        a.regularisation_radius * (1/1.5);
+        negligible_vort=0.25)
+    a.te_wake.wake_particles.positions = nppos;
+    a.te_wake.wake_particles.vorts = npvort
+    return;
+end
+
+function relax_wake!(a::PEVLM; 
+    relaxation_parameter::Float64=0.3) :: Nothing
+    p_locs, p_vorts = get_vortex_particles(a.te_wake)
+    npvort= CVortex.particle_pedrizzetti_relaxation(
+        p_locs, p_vorts, relaxation_parameter,
+        a.regularisation_kernel, a.regularisation_radius )
+    a.te_wake.wake_particles.vorts = npvort
+    return;
+end
 
 #= IO FUNCTIONS =============================================================#
 
@@ -317,4 +392,68 @@ function cross_section_vels(a::PEVLM, filename::String, y::Float64)
     vtkfile = WriteVTK.vtk_grid(filename, points', cells)
     WriteVTK.vtk_point_data(vtkfile, vels', "Velocity")
     WriteVTK.vtk_save(vtkfile)
+end
+
+function export_vorticity_field2(
+    a::PEVLM, 
+    filename::String;
+    resolution::Float64=-1.0,
+    bounds=[]) :: Nothing
+
+    if resolution == -1.0
+        resolution = a.regularisation_radius / 3
+    end
+    if length(bounds) == 0
+        pts = a.te_wake.wake_particles.positions
+        pts = vcat(pts, get_vertices(a.wing_lattice))
+        bounds = [
+            minimum(pts[:,1]), maximum(pts[:,1]),
+            minimum(pts[:,2]), maximum(pts[:,2]),
+            minimum(pts[:,3]), maximum(pts[:,3])]
+    end
+    @assert(resolution > 0)
+    @assert(length(bounds) == 6)
+    @assert(all(isfinite.(bounds)))
+
+    xs = collect(bounds[1]:resolution:bounds[2])
+    ys = collect(bounds[3]:resolution:bounds[4])
+    zs = collect(bounds[5]:resolution:bounds[6])
+    @assert(length(xs)>1)
+    @assert(length(ys)>1)
+    @assert(length(zs)>1)
+    nx = length(xs)
+    ny = length(ys)
+    nz = length(zs)
+    coord_msh = zeros(Float32, nx, ny, nz, 3)
+    for ix = 1 : nx
+        for iy = 1 : ny
+            for iz = 1 : nz
+                coord_msh[ix,iy,iz,:] = [xs[ix], ys[iy], zs[iz]]
+            end
+        end
+    end
+    coord_msh = reshape(coord_msh,:,3)
+    vorts = field_vorticity(a, coord_msh)
+    idxs = collect(1 : size(vorts)[1])
+    idxs = reshape(idxs, nx, ny, nz)
+
+    points = coord_msh
+    ncells = (nx-1)*(nz-1)*(ny-1)
+    cells = Vector{WriteVTK.MeshCell}(undef, ncells)
+    acc = 0
+    for ix = 1 : nx-1
+        for iy = 1 : ny-1
+            for iz = 1 : nz-1
+                acc += 1
+                cells[acc] = WriteVTK.MeshCell(WriteVTK.VTKCellTypes.VTK_HEXAHEDRON, 
+                    [idxs[ix,iy,iz], idxs[ix+1,iy,iz], idxs[ix+1,iy+1,iz], idxs[ix,iy+1,iz],
+                    idxs[ix,iy,iz+1], idxs[ix+1,iy,iz+1], idxs[ix+1,iy+1,iz+1], idxs[ix,iy+1,iz+1]])
+            end
+        end
+    end
+
+    vtkfile = WriteVTK.vtk_grid(filename, points', cells)
+    WriteVTK.vtk_point_data(vtkfile, vorts', "Vorticity")
+    WriteVTK.vtk_save(vtkfile)
+    return
 end
