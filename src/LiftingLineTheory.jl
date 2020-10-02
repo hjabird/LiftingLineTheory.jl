@@ -22,6 +22,10 @@ export
 	LAULLT,
 	LAUTAT,
 	LDVM,
+	UnsteadyVortexLatticeMethod,
+	UnsteadyVortexLatticeMethod2D,
+	PEVLM,
+	LMPEVLM,
 	RigidKinematics2D,
 	StraightAnalyticWing,
 	SclavounosULLT,
@@ -76,6 +80,7 @@ export
 	import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature, QuadGK
 	# source files
 	include("DownwashEnum.jl")			# An enum. No deps.
+	include("PointsVortsODE.jl")		# Solve topical ODEs.
 	include("SpecialisedFunctions.jl")	# Wagner etc. + Exponential integral
 	include("RigidKinematics2D.jl")		# Rigid 2D RigidKinematics2D
 	include("ThinFoilGeometry.jl")		# Thin aerofoil representation
