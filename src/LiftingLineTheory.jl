@@ -77,7 +77,7 @@ export
 	
 	using CVortex
 	using LinearAlgebra
-	import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature, QuadGK
+	import ForwardDiff, WriteVTK, FastGaussQuadrature, HCubature, QuadGK, FFTW
 	# source files
 	include("DownwashEnum.jl")			# An enum. No deps.
 	include("PointsVortsODE.jl")		# Solve topical ODEs.
@@ -100,6 +100,7 @@ export
 	include("SclavounosULLT.jl")		# A faithful reproduction of Sclavounos.
 	include("GuermondUnsteady.jl")		# HF Harmonic ULLT - Rect. Wing only.
 	include("GuermondUnsteady2.jl")		# HF Harmonic ULLT - Straight wings only.
+	include("WingFrequencyResponse.jl") # Multiple HarmonicULLTs at different fqs.
 	include("LAUTAT.jl")				# Large amplitude thin aerofoil theory
 	include("LDVM.jl")					# LESP modulated discrete vortex method.
 	include("LAULLT.jl")				# Large amplitude lifting line theory
