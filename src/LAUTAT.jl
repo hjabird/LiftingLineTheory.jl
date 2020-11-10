@@ -197,7 +197,7 @@ function non_foil_ind_vel(a::LAUTAT, mes_pnts::Matrix{<:Real})
     return vels
 end
 
-function te_wake_particle_velocities(a::LAUTAT)
+function te_wake_particle_velocities(a::LAUTAT) :: Matrix{Float64}
     reg_dist = a.reg_dist
     kernel = a.regularisation
     vel_nf = non_foil_ind_vel(a, a.te_particles.positions)
@@ -208,7 +208,7 @@ function te_wake_particle_velocities(a::LAUTAT)
     return vels
 end
 
-function vel_normal_to_foil_surface(a::LAUTAT)
+function vel_normal_to_foil_surface(a::LAUTAT) :: Vector{Float64}
     mes_pnts = a.dw_positions
     @assert(all(-1 .<= mes_pnts .<= 1), "Foil in [-1,1]")
     field_vels = deepcopy(a.dw_values)
@@ -227,7 +227,7 @@ function vel_normal_to_foil_surface(a::LAUTAT)
     return wash
 end
 
-function compute_fourier_terms(a::LAUTAT)
+function compute_fourier_terms(a::LAUTAT) :: Vector{Float64}
     points, weights = deepcopy(a.dw_positions), deepcopy(a.dw_weights)
 	weights = weights ./ sqrt.(1 .- points.^2)
 	points = acos.(.-points)
@@ -242,7 +242,7 @@ function compute_fourier_terms(a::LAUTAT)
     return fterms
 end
 
-function foil_velocity(a::LAUTAT, local_pos::Vector{<:Real})
+function foil_velocity(a::LAUTAT, local_pos::Vector{<:Real}) :: Matrix{Float64}
     @assert(all(-1 .<= local_pos .<= 1))
     angular_vel = a.kinematics.dAoAdt(a.current_time)
     radii = foil_points(a, local_pos) - pivot_coordinate(a.kinematics, a.current_time)'
@@ -252,7 +252,7 @@ function foil_velocity(a::LAUTAT, local_pos::Vector{<:Real})
     return vel
 end
 
-function shed_new_te_particle_with_zero_vorticity!(a::LAUTAT)
+function shed_new_te_particle_with_zero_vorticity!(a::LAUTAT) :: Nothing
     @assert(size(a.te_particles.positions)[1] == length(a.te_particles.vorts))
     np = length(a.te_particles.vorts)
     if np == 0 # The first shed particle
@@ -271,7 +271,7 @@ function shed_new_te_particle_with_zero_vorticity!(a::LAUTAT)
     return
 end
 
-function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
+function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT) :: Nothing
     @assert(size(a.te_particles.positions)[1] == length(a.te_particles.vorts))
     alpha = a.kinematics.AoA(a.current_time)
     alpha_dot = a.kinematics.dAoAdt(a.current_time)
@@ -304,8 +304,21 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LAUTAT)
     return
 end
 
-function total_te_vorticity(a::LAUTAT)
+function total_te_vorticity(a::LAUTAT) :: Float32
     return sum(a.te_particles.vorts)
+end
+
+function redistribute_wake!(a::LAUTAT) :: Nothing
+    tep = a.te_particles.positions[1:end-1,:]
+    tev = a.te_particles.vorts[1:end-1]
+    ntep, ntev, ~ = CVortex.redistribute_particles_on_grid(
+        tep, tev, m4p_redistribution(), a.reg_dist * 0.666)
+    a.te_particles.positions = vcat(
+        ntep, a.te_particles.positions[end:end, :] )
+    a.te_particles.vorts = vcat(ntev, a.te_particles.vorts[end])
+    @assert(size(a.te_particles.vorts)[1] == 
+        size(a.te_particles.positions)[1])
+    return;
 end
 
 function leading_edge_suction_force(a::LAUTAT, density::Real)

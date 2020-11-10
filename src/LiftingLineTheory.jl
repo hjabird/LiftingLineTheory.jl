@@ -63,6 +63,7 @@ export
 
 	# Useful fuctions 
 	eldredge_ramp,
+	make_normalised_eldredge_ramp,
 	wagner_fn,
 	theodorsen_fn,
 	sears_fn,

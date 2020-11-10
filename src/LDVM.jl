@@ -333,7 +333,7 @@ function adjust_last_shed_te_particle_for_kelvin_condition!(a::LDVM)::Nothing
     end
     I_uk = sum(I_uk_integrand(qpoints) .* qweights)
     # And now work out the vorticity
-    vort = - (I_k + total_te_vorticity(a)) / (1 + I_uk)
+    vort = - (I_k + total_wake_vorticity(a)) / (1 + I_uk)
     a.te_particles.vorts[end] = vort
     add_particle_to_downwash_cache!(a, posn, vort)
     return
@@ -486,15 +486,46 @@ function combine_wakes(a::LDVM)::ParticleGroup2D
 end
 
 function total_te_vorticity(a::LDVM)::Float32
+    # We put LEVs into TEVs when redistributing
     return sum(a.te_particles.vorts)
 end
 
 function total_le_vorticity(a::LDVM)::Float32
+    # We put LEVs into TEVs when redistributing
     return sum(a.le_particles.vorts)
 end
 
 function total_wake_vorticity(a::LDVM)::Float32
     return total_le_vorticity(a) + total_te_vorticity(a)
+end
+
+function merge_levs_into_tevs!(a::LDVM)::Nothing
+    if (num_particles(a.le_particles) > 1) | 
+        ((!a.shed_lev_on_last_step) & (num_particles(a.le_particles) > 0))
+        a.te_particles.positions =
+            vcat(   a.le_particles.positions[1:end-1, :],
+                    a.te_particles.positions[1:end, :] )
+        a.te_particles.vorts =
+            vcat(   a.le_particles.vorts[1:end-1],
+                    a.te_particles.vorts[1:end] )
+        a.le_particles.positions = a.le_particles.positions[end:end,:]
+        a.le_particles.vorts = a.le_particles.vorts[end:end]
+    end
+    return
+end
+
+function redistribute_wake!(a::LDVM) :: Nothing
+    merge_levs_into_tevs!(a)
+    tep = a.te_particles.positions[1:end-1,:]
+    tev = a.te_particles.vorts[1:end-1]
+    ntep, ntev, ~ = CVortex.redistribute_particles_on_grid(
+        tep, tev, m4p_redistribution(), a.reg_dist * 0.666)
+    a.te_particles.positions = vcat(
+        ntep, a.te_particles.positions[end:end, :] )
+    a.te_particles.vorts = vcat(ntev, a.te_particles.vorts[end])
+    @assert(size(a.te_particles.vorts)[1] == 
+        size(a.te_particles.positions)[1])
+    return;
 end
 
 function leading_edge_suction_force(a::LDVM, density::Real)::Float64

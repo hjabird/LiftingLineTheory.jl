@@ -41,6 +41,10 @@ function total_vorticity(a::ParticleGroup2D)
     return sum(a.vorts)
 end
 
+function num_particles(a::ParticleGroup2D) :: Int64
+    return length(a.vorts)
+end
+
 function to_vtk(
     a::ParticleGroup2D,
     filename::String;

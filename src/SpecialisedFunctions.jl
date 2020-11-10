@@ -603,7 +603,7 @@ AIAA 2010-1085
 function eldredge_ramp(
     t::Real, 
     t1::Real, t2::Real, t3::Real, t4::Real, 
-    U_inf::Real, chord::Real; a=-1, sigma=0.9)
+    U_inf::Real, chord::Real; a::Real=-1, sigma::Real=0.9)
     @assert(chord > 0, "Chord must be positive.")
     @assert(U_inf > 0, "Reference velocity must be positive.")
     @assert(sigma > 0, "Free parameter a must be positive.")
@@ -613,6 +613,17 @@ function eldredge_ramp(
     t11n = cosh(a * U_inf * (t-t1) / chord) * cosh(a * U_inf * (t-t4) / chord)
     t11d = cosh(a * U_inf * (t-t2) / chord) * cosh(a * U_inf * (t-t3) / chord) 
     return log(t11n / t11d)
+end
+
+function make_normalised_eldredge_ramp(
+    t1::Real, t2::Real, t3::Real, t4::Real, U_inf::Real, chord::Real; 
+    a::Real=-1, sigma::Real=0.9) :: Function
+
+    fn = t->eldredge_ramp(t, t1, t2, t3, t4, U_inf, chord; 
+        a=a, sigma=sigma)
+    fn_max = fn((t2 + t3)/2)
+    normalised_fn = t->fn(t) / fn_max
+    return normalised_fn
 end
 
 #- Struve functions - homebaked ----------------------------------------------
