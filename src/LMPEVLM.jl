@@ -2,16 +2,37 @@
 # LMPEVLM.jl
 #
 # L(ESP) Modulated Particle Enhanced Vortex Lattice Method
+# or 
+# VOrtex Formation on Finite Leading Edge: VoFFLE.
 #
 # Copyright HJAB 2020
+#
+# Use:
+#   kinem = make_pitch_function(RigidKinematics2D, 0, t->deg2rad(40)*sin(t))
+#   wing = make_rectangular(StraightAnalyticWing, 4, 4)
+#   prob = LMPEVLM(wing, kinematics; lesp_crit=0.11)
+#   hdr = csv_titles(prob)
+#   data = zeros(0, length(hdr))
+#   for i = 1 : 100
+#       advance_one_step(prob)
+#       to_vtk(prob, "lmpevlm", i)
+#       data = vcat(data, csv_row(prob))
+#       if i % 2 == 0
+#           redistribute_wake!(prob)
+#       end
+#   end
 #
 ################################################################################
 
 mutable struct LMPEVLM
     free_stream_vel :: Float64
     kinematics :: RigidKinematics2D
-    reference_wing_lattice :: VortexLattice # TE at jmax.
+    
+    reference_wing_geometry :: StraightAnalyticWing
+    wing_discretisation_chordwise :: Vector{Float64}
+    wing_discretisation_spanwise :: Vector{Float64}
 
+    reference_wing_lattice :: VortexLattice # TE at jmax.
     wing_lattice :: VortexLattice       
     old_wing_lattice :: VortexLattice
 
@@ -20,7 +41,7 @@ mutable struct LMPEVLM
     lt_wake :: BufferedParticleWake # Left tip wake
     rt_wake :: BufferedParticleWake # Right tip wake
 
-    critical_le_vorticity :: Vector{Float64}
+    lesp_critical :: Float64
 	kinematic_viscocity :: Float64
     regularisation_radius :: Float64
     regularisation_kernel :: CVortex.RegularisationFunction
@@ -28,97 +49,114 @@ mutable struct LMPEVLM
     current_time :: Float64
 
     initialised :: Bool
+    tip_shedding :: Bool
     wing_self_influence_matrix :: Matrix{Float32}
     wing_self_influence_matrix_ring_mapping :: Matrix{Int64}
 
     # Detailed constructor
     function LMPEVLM(;
-        ref_wing_lattice :: VortexLattice,
+        reference_wing_geometry :: StraightAnalyticWing,
+        wing_discretisation_chordwise :: Union{Vector{<:Real}, Int} = zeros(0),
+        wing_discretisation_spanwise :: Union{Vector{<:Real}, Int} = zeros(0),
         kinematics :: RigidKinematics2D,
-        dt :: Float64 = -1.,
+        dt :: Real = -1.,
         free_stream_vel :: Real = 1.,
-        current_time :: Float64 = 0.,
-        critical_le_vorticity :: Vector{Float64} = zeros(0),
-		kinematic_viscocity :: Float64 = 0.,
-        regularisation_radius :: Float64 = -1.,
-        regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation()
+        current_time :: Real = 0.,
+        lesp_critical :: Real = -1.,
+		kinematic_viscocity :: Real = 0.,
+        regularisation_radius :: Real = -1.,
+        regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation(),
+        tip_shedding :: Bool = false
         ) :: LMPEVLM
 
-        szw = size(ref_wing_lattice.vertices)
+        if dt == -1
+            cc = reference_wing_geometry.chord_fn(0.)
+            dt = (1/20) * cc / free_stream_vel
+        end
+        @assert(dt > 0.0)
+        if regularisation_radius == -1.
+            regularisation_radius = dt * free_stream_vel  * 1.5
+        end
+
+        ## GEOMETRY
+        if length(wing_discretisation_chordwise) == 0
+            wing_discretisation_chordwise = -cos.(range(0, pi; length=15))
+        elseif typeof(wing_discretisation_chordwise) <: Int
+            @assert(wing_discretisation_chordwise > 1)
+            wing_discretisation_chordwise = -cos.(range(0, pi; 
+            length=wing_discretisation_chordwise))
+        end
+        if length(wing_discretisation_spanwise) == 0|| typeof(wing_discretisation_chordwise) <: Int
+            ar = aspect_ratio(reference_wing_geometry)
+            num_spanswise = Int64(round(10 + ar * 3))
+            wing_discretisation_spanwise = cos.(range(0, pi; length=num_spanswise))
+        elseif typeof(wing_discretisation_spanwise) <: Int
+            @assert(wing_discretisation_spanwise > 1)
+            wing_discretisation_spanwise = -cos.(range(0, pi; 
+                length=wing_discretisation_spanwise))
+        end
+        function geom_fn(x,y)
+            # x and y are swapped because of the desired indexing scheme.
+            xp = y * reference_wing_geometry.chord_fn(
+                x * reference_wing_geometry.semispan) / 2
+            yp = x * reference_wing_geometry.semispan
+            return [xp, yp, 0]
+        end
+        # We want to put the ring geometry 1/4 of a ring back.
+        wdc = deepcopy(wing_discretisation_chordwise)
+        cwdc = deepcopy(wdc)
+        cwdc[1:end-1] = wdc[1:end-1] + 0.25 * (wdc[2:end]-wdc[1:end-1])
+        cwdc[end] = wdc[end] + 0.25 * (wdc[end] - wdc[end-1])
+        ref_lattice = VortexLattice(geom_fn;
+            ys=cwdc, 
+            xs=wing_discretisation_spanwise)
+
+        if lesp_critical == -1
+            lesp_critical = 9e99
+        end
+        @assert(lesp_critical >= 0)
+
+        szw = size(ref_lattice.vertices)
         wing_lattice = VortexLattice(zeros(szw))
         old_wing_lattice = VortexLattice(zeros(szw))
+        @assert(regularisation_radius > 0)
 
         new(free_stream_vel, kinematics,
-            ref_wing_lattice,
-            wing_lattice, old_wing_lattice, 
+            reference_wing_geometry, wing_discretisation_chordwise,
+            wing_discretisation_spanwise,
+            ref_lattice, wing_lattice, old_wing_lattice, 
             BufferedParticleWake(), BufferedParticleWake(),
             BufferedParticleWake(), BufferedParticleWake(),
-            critical_le_vorticity, kinematic_viscocity,
+            lesp_critical, kinematic_viscocity,
             regularisation_radius, regularisation_kernel,
-            dt, current_time, false, zeros(Float32,0,0), zeros(Int64,0,0))
+            dt, current_time, false, tip_shedding,
+            zeros(Float32,0,0), zeros(Int64,0,0))
     end
 end
 
 function LMPEVLM(
     wing :: StraightAnalyticWing,
     kinematics :: RigidKinematics2D;
-    dt :: Float64 = -1.,
+    dt :: Real = -1.,
     free_stream_vel :: Real = 1.,
-    current_time :: Float64 = 0.,
-    wing_discretisation_chordwise::Vector{<:Real}=collect(range(-1, 1; length=20)), 
-    wing_discretisation_spanwise::Vector{<:Real}=cos.(range(0, pi; length=40)),
-    a0_critical :: Float64 = -1.0,
-	kinematic_viscocity :: Float64 = 0.0,
-    regularisation_radius :: Float64 = -1.0,
+    current_time :: Real = 0.,
+    wing_discretisation_chordwise::Union{Vector{<:Real}, Int}=zeros(0),
+    wing_discretisation_spanwise::Union{Vector{<:Real}, Int}=zeros(0),
+    lesp_critical :: Real = -1.0,
+	kinematic_viscocity :: Real = 0.0,
+    regularisation_radius :: Real = -1.0,
     regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation()
     ) :: LMPEVLM
 
-    ## GEOMETRY
-    function geom_fn(x,y)
-        # x and y are swapped because of the desired indexing scheme.
-        xp = y * wing.chord_fn(x * wing.semispan) / 2
-        yp = x * wing.semispan
-        return [xp, yp, 0]
-    end
-    # We want to put the ring geometry 1/4 of a ring back.
-    wdc = deepcopy(wing_discretisation_chordwise)
-    cwdc = deepcopy(wdc)
-    cwdc[1:end-1] = wdc[1:end-1] + 0.25 * (wdc[2:end]-wdc[1:end-1])
-    cwdc[end] = wdc[end] + 0.25 * (wdc[end] - wdc[end-1])
-    ref_lattice = VortexLattice(geom_fn;
-        ys=cwdc, 
-        xs=wing_discretisation_spanwise)
-    if dt == -1
-        dt = 0.05 * wing.chord_fn(0) / free_stream_vel
-    end
-    
-    @assert(dt != 0.0)
-    if regularisation_radius == -1.
-        regularisation_radius = dt * free_stream_vel 
-    end
-
-    if a0_critical == -1
-        critical_le_vorticity = fill(9e99, extent_i(ref_lattice))
-    else
-        dx1 = ref_lattice.vertices[:,2,1] - ref_lattice.vertices[:,1,1]
-        dx1 = (dx1[1:end-1] + dx1[2:end]) / 2
-        yps = ref_lattice.vertices[:,1,2]
-        yps = (yps[1:end-1] + yps[2:end]) / 2
-        semichords = map(y->wing.chord_fn(y)/2, yps)
-        corr = free_stream_vel * 2 * semichords .* (
-            acos.(1 .- dx1 ./ semichords) +
-            sin.(acos.(1 .- dx1 ./ semichords)))
-        critical_le_vorticity = corr * a0_critical
-    end
-    @assert(all(critical_le_vorticity .>= 0))
-
     return LMPEVLM(
-        ref_wing_lattice=ref_lattice,
         kinematics=kinematics,
+        reference_wing_geometry=wing,
+        wing_discretisation_chordwise=wing_discretisation_chordwise,
+        wing_discretisation_spanwise=wing_discretisation_spanwise,
         dt=dt,
         free_stream_vel=free_stream_vel,
         current_time=current_time,
-        critical_le_vorticity=critical_le_vorticity,
+        lesp_critical=lesp_critical,
 		kinematic_viscocity=kinematic_viscocity,
         regularisation_kernel=regularisation_kernel,
         regularisation_radius=regularisation_radius
@@ -228,7 +266,7 @@ end
 
 function update_wing_lattice!(a::LMPEVLM) :: Nothing
     z_offset = z_pos(a.kinematics, a.current_time)
-    aoa = AoA(a.kinematics, a.current_time)
+    aoa = -AoA(a.kinematics, a.current_time)
     piv_x = pivot_position(a.kinematics)
     
     new_geometry = get_vertices(a.reference_wing_lattice)
@@ -291,14 +329,22 @@ function update_tip_wake_lattices!(a::LMPEVLM; buffer_rows::Int=1) :: Nothing
     # On one tip we have to do -ve strengths
     lt_wake_verts = reshape(a.wing_lattice.vertices[1,:,:],:,3)
     add_new_buffer_row!(a.lt_wake, lt_wake_verts)
-    a.lt_wake.lattice_buffer.strengths[:, end] = -a.wing_lattice.strengths[1, :]
+    if a.tip_shedding
+        a.lt_wake.lattice_buffer.strengths[:, end] = -a.wing_lattice.strengths[1, :]
+    else
+        a.lt_wake.lattice_buffer.strengths[:, end] = zeros(length(-a.wing_lattice.strengths[1, :]))
+    end
     buffer_to_particles(a.lt_wake,
         2 * a.regularisation_radius / 2.0;  # Particle separation.
         buffer_rows=buffer_rows)
 
     rt_wake_verts = reshape(a.wing_lattice.vertices[end,:,:],:,3)
     add_new_buffer_row!(a.rt_wake, rt_wake_verts)
-    a.rt_wake.lattice_buffer.strengths[:, end] = a.wing_lattice.strengths[end, :]
+    if a.tip_shedding
+        a.rt_wake.lattice_buffer.strengths[:, end] = a.wing_lattice.strengths[end, :]
+    else
+        a.rt_wake.lattice_buffer.strengths[:, end] = zeros(length(a.wing_lattice.strengths[end, :]))
+    end
     buffer_to_particles(a.rt_wake,
         2 * a.regularisation_radius / 2.0;  # Particle separation.
         buffer_rows=buffer_rows)
@@ -364,12 +410,12 @@ function wing_surface_velocity(
     @assert(size(pnts)[2] == 3)
     z_vel = dzdt(a.kinematics, a.current_time) 
     z_off = z_pos(a.kinematics, a.current_time)
-    daoadt = dAoAdt(a.kinematics, a.current_time)
+    daoadt = -dAoAdt(a.kinematics, a.current_time)
     piv_x = pivot_position(a.kinematics)
     wing_vel = zeros(size(pnts))
     wing_vel[:,3] .= z_vel
     wing_vel[:,1] += daoadt .* (pnts[:,3] .- z_off)
-    wing_vel[:,2] += daoadt .* (pnts[:,1] .- piv_x)
+    wing_vel[:,3] += daoadt .* (pnts[:,1] .- piv_x)
     return wing_vel
 end
 
@@ -423,6 +469,7 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
     # The influence matrix for the LEV - we'll selectively use bits.
     lev_sublattice = extract_sublattice(
         a.le_wake.lattice_buffer, 1, ni_w, nj_le-1, nj_le)
+    @assert(all(lev_sublattice.strengths .== 0))
     le_inf_matx, le_ring_idxs = 
         ring_influence_matrix(lev_sublattice, centres, normals)
     # The two rows have to share the same ring strength. 
@@ -438,15 +485,21 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
     wing_vel = wing_surface_velocity(a, centres)
 
     # Iteration is required for the lesp criterion.
-    critical_vorts = a.critical_le_vorticity
+    critical_vorts = a0_to_le_vort_const(a) .* a.lesp_critical
     leading_edge_vorticity = zeros(ni_w)
     le_vort_sgn = zeros(ni_le)
     ring_strengths = zeros(size(centres)[1])
+    le_iter_count = 0
     while true
         le_vort_sgn = map(x-> x > 0. ? 1. : -1., leading_edge_vorticity)
         # Construct the modification to the influence matrix.
         inf_mat = deepcopy(w_inf_mat)
-        inf_mat[:, wing_le_idxs[shedding_le_mask]] += le_inf_mat[:, shedding_le_mask]
+        for i = 1 : length(le_vort_sgn)
+            if shedding_le_mask[i]
+                inf_mat[:, wing_le_idxs[i]] -= (
+                    le_vort_sgn[i] .* le_inf_mat[:, i])
+            end
+        end
 
         # Construct the modification to the ext vel vector.
         lesp_const_vel = zeros(size(centres)[1])
@@ -461,9 +514,13 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
         # Do we need to modify the shedding locations and try again?
         leading_edge_vorticity = map(i->ring_strengths[i], w_ring_idxs[:,1])
         o_le_shedding_mask = abs.(leading_edge_vorticity) .> critical_vorts
-        if o_le_shedding_mask == shedding_le_mask
+        if o_le_shedding_mask == shedding_le_mask || le_iter_count > 2
+            # It only ever seems to iterate between 2 values, so
+            # presumably it doesn't really matter which we choose.
             break
         else
+            print("\rIterating shedding mask.")
+            le_iter_count += 1
             shedding_le_mask = o_le_shedding_mask
         end
     end
@@ -618,6 +675,29 @@ function wing_le_position(
 end
 
 
+function a0_to_le_vort_const(a::LMPEVLM) :: Vector{Float64}
+    # Gamma_1 = A_0 * THIS 
+    wds = a.wing_discretisation_spanwise
+    wdc = a.wing_discretisation_chordwise
+    ret = zeros(length(wds)-1)
+    le_verts = a.reference_wing_lattice.vertices[:,1,:]
+    le_fil_centres = (le_verts[2:end,:] + le_verts[1:end-1,:]) / 2
+    chords = a.reference_wing_geometry.chord_fn.(le_fil_centres[:,2])
+    dtheta = (-acos(wdc[2]) - -acos(wdc[1]))
+    corr = a.free_stream_vel * chords * 
+        (sin(dtheta) + dtheta)
+    return corr
+end
+
+
+function a0_value(a::LMPEVLM) :: Vector{Float64}
+    str = a.wing_lattice.strengths[:,1] + a.le_wake.lattice_buffer.strengths[:,end]
+    corr = a0_to_le_vort_const(a)
+    a0 = str ./ corr
+    return a0
+end
+
+
 function transfer_all_particles_to_te_wake!(a::LMPEVLM)
     tepos, tevort = get_vortex_particles(a.te_wake)
     lepos, levort = get_vortex_particles(a.le_wake)
@@ -636,6 +716,7 @@ function transfer_all_particles_to_te_wake!(a::LMPEVLM)
     return
 end
 
+
 function redistribute_wake!(a::LMPEVLM)
     transfer_all_particles_to_te_wake!(a)
     p_locs, p_vorts = get_vortex_particles(a.te_wake)
@@ -649,6 +730,7 @@ function redistribute_wake!(a::LMPEVLM)
     return;
 end
 
+
 function relax_wake!(a::LMPEVLM; 
     relaxation_parameter::Float64=0.3) :: Nothing
     transfer_all_particles_to_te_wake!(a)
@@ -660,6 +742,105 @@ function relax_wake!(a::LMPEVLM;
     return;
 end
 
+
+function pressure_distribution(a::LMPEVLM; density::Float64=1.) :: Matrix{Float64}
+    # See page 427 of Katz and Plotkin
+    # Rate of change of ring vorticities.
+    cvd = a.wing_lattice.strengths
+    ovd = a.old_wing_lattice.strengths
+    dvdt = (cvd - ovd) ./ a.dt
+    # Geometry
+    rcs = ring_centres(a.wing_lattice)
+    tangentd1, tangentd2 = normalised_ring_tangents(a.wing_lattice)
+    ring_widthd1, ring_widthd2 = ring_widths(a.wing_lattice)
+    # Velocity at ring centres.
+    ni, nj, ~ = size(rcs)
+    rc_vec = zeros(ni*nj, 3)
+    surf_vels = zeros(ni, nj, 3)
+    for i = 1 : ni
+        for j = 1 : nj
+            rc_vec[(i-1)*nj+j,:] = rcs[i,j,:]
+        end
+    end
+    # Get const influences from the near_wake and free stream.
+    ext_vel = nonwing_ind_vel(a, rc_vec)
+    # Get the velocity of the points on the wing.
+    z_vel = dzdt(a.kinematics, a.current_time) 
+    z_off = z_pos(a.kinematics, a.current_time)
+    daoadt = -dAoAdt(a.kinematics, a.current_time)
+    piv_x = pivot_position(a.kinematics)
+    wing_vel = zeros(size(rc_vec))
+    wing_vel[:,3] .= z_vel
+    wing_vel[:,1] += daoadt .* (rc_vec[:,3] .- z_off)
+    wing_vel[:,3] += daoadt .* (rc_vec[:,1] .- piv_x)
+    ext_vel = ext_vel-wing_vel
+    for i = 1 : ni
+        for j = 1 : nj
+            surf_vels[i,j,:] = ext_vel[(i-1)*nj+j,:]
+        end
+    end
+    # Vorticity deriv wrt/ grid.
+    vd1, vd2 = vorticity_derivatives(a.wing_lattice) # include c_ij etc terms. 
+    
+    # Compute pressure differences
+    pres = zeros(ni,nj)
+    for i = 1 : ni
+        for j = 1 : nj
+            pres[i,j] = (sum(surf_vels[i,j,:].*tangentd1[i,j,:]) * vd1[i,j] +
+                sum(surf_vels[i,j,:].*tangentd2[i,j,:]) * vd2[i,j] +
+                dvdt[i,j])
+        end
+    end
+    pres = pres .* density
+    return pres
+end
+
+function lift_coefficient(a::LMPEVLM; lift_direction::Vector{<:Real}=[0.,0.,1.]) :: Float64
+    @assert(length(lift_direction)==3)
+    pressures = pressure_distribution(a)
+    areas = ring_areas(a.wing_lattice)
+    normal_force = pressures .* areas
+    normals = ring_normals(a.wing_lattice) # Unit vectors
+    ni, nj = size(areas)
+    coeffs = zeros(ni, nj)
+    for i = 1:ni
+        for j = 1:nj
+            coeffs[i,j] = sum(normals[i,j,:] .* lift_direction)
+        end
+    end
+    lift = sum(normal_force .* coeffs)
+    area = sum(ring_areas(a.wing_lattice))
+    U = a.free_stream_vel
+    CL = lift / (0.5 * U^2 * area)
+    return CL
+end
+
+function lift_coefficient_distribution(a::LMPEVLM; 
+    lift_direction::Vector{<:Real}=[0.,0.,1.]
+    ) :: Tuple{Vector{Float64}, Vector{Float64}}
+    @assert(length(lift_direction)==3)
+    pressures = pressure_distribution(a)
+    areas = ring_areas(a.wing_lattice)
+    normal_force = pressures .* areas
+    normals = ring_normals(a.wing_lattice) # Unit vectors
+    centres = ring_centres(a.wing_lattice)
+    ni, nj = size(areas)
+    coeffs = zeros(ni, nj)
+    for i = 1:ni
+        for j = 1:nj
+            coeffs[i,j] = sum(normals[i,j,:] .* lift_direction)
+        end
+    end
+    lifts = normal_force .* coeffs
+    areas = ring_areas(a.wing_lattice)
+    # chord wise section basis. 
+    lifts = map(x->sum(lifts[x,:]), collect(1:ni))
+    areas = map(x->sum(areas[x,:]), collect(1:ni))
+
+    U = a.free_stream_vel
+    Cl = lifts ./ (0.5 * U^2 * areas)
+    return Cl, centres[:,1,2]
+end
 
 #= IO FUNCTIONS =============================================================#
 

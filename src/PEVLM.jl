@@ -10,8 +10,12 @@
 mutable struct PEVLM
     free_stream_vel :: Float64
     kinematics :: RigidKinematics2D
-    reference_wing_lattice :: VortexLattice # TE at jmax.
 
+    reference_wing_geometry :: StraightAnalyticWing
+    wing_discretisation_chordwise :: Vector{Float64}
+    wing_discretisation_spanwise :: Vector{Float64}
+
+    reference_wing_lattice :: VortexLattice # TE at jmax.
     wing_lattice :: VortexLattice       
     old_wing_lattice :: VortexLattice
 
@@ -26,21 +30,65 @@ mutable struct PEVLM
 
     # Detailed constructor
     function PEVLM(;
-        ref_wing_lattice :: VortexLattice,
+        reference_wing_geometry :: StraightAnalyticWing,
         kinematics :: RigidKinematics2D,
+        wing_discretisation_chordwise :: Union{Vector{<:Real}, Int} = zeros(0),
+        wing_discretisation_spanwise :: Union{Vector{<:Real}, Int} = zeros(0),
         dt :: Float64 = -1.,
         free_stream_vel :: Real = 1.,
         current_time :: Float64 = 0.,
         regularisation_radius :: Float64 = -1.,
         regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation())
 
-        szw = size(ref_wing_lattice.vertices)
+        if dt == -1
+            dt = 1/20 * reference_wing_geometry.chord_fn(0) / free_stream_vel
+        end
+        @assert(dt != 0.0)
+        if regularisation_radius == -1.
+            regularisation_radius = dt * free_stream_vel * 1.5
+        end
+
+        ## GEOMETRY
+        if length(wing_discretisation_chordwise) == 0
+            wing_discretisation_chordwise = -cos.(range(0, pi; length=15))
+        elseif typeof(wing_discretisation_chordwise) <: Int
+            @assert(wing_discretisation_chordwise > 1)
+            wing_discretisation_chordwise = -cos.(range(0, pi; 
+            length=wing_discretisation_chordwise))
+        end
+        if length(wing_discretisation_spanwise) == 0|| typeof(wing_discretisation_chordwise) <: Int
+            ar = aspect_ratio(reference_wing_geometry)
+            num_spanswise = Int64(round(10 + ar * 3))
+            wing_discretisation_spanwise = cos.(range(0, pi; length=num_spanswise))
+        elseif typeof(wing_discretisation_spanwise) <: Int
+            @assert(wing_discretisation_spanwise > 1)
+            wing_discretisation_spanwise = -cos.(range(0, pi; 
+                length=wing_discretisation_spanwise))
+        end
+        function geom_fn(x,y)
+            # x and y are swapped because of the desired indexing scheme.
+            xp = y * reference_wing_geometry.chord_fn(
+                x * reference_wing_geometry.semispan) / 2
+            yp = x * reference_wing_geometry.semispan
+            return [xp, yp, 0]
+        end
+        # We want to put the ring geometry 1/4 of a ring back.
+        wdc = deepcopy(wing_discretisation_chordwise)
+        cwdc = deepcopy(wdc)
+        cwdc[1:end-1] = wdc[1:end-1] + 0.25 * (wdc[2:end]-wdc[1:end-1])
+        cwdc[end] = wdc[end] + 0.25 * (wdc[end] - wdc[end-1])
+        ref_lattice = VortexLattice(geom_fn;
+            ys=cwdc, 
+            xs=wing_discretisation_spanwise)
+
+        szw = size(ref_lattice.vertices)
         wing_lattice = VortexLattice(zeros(szw))
         old_wing_lattice = VortexLattice(zeros(szw))
 
         new(free_stream_vel, kinematics,
-            ref_wing_lattice,
-            wing_lattice, old_wing_lattice, 
+            reference_wing_geometry, wing_discretisation_chordwise,
+            wing_discretisation_spanwise,
+            ref_lattice, wing_lattice, old_wing_lattice, 
             BufferedParticleWake(),
             regularisation_radius, regularisation_kernel,
             dt, current_time, false)
@@ -53,35 +101,20 @@ function PEVLM(
     dt :: Float64 = -1.,
     free_stream_vel :: Real = 1.,
     current_time :: Float64 = 0.,
-    wing_discretisation_chordwise::Vector{<:Real}=collect(range(-1, 1; length=20)), #-cos.(range(0, pi; length=20)),
-    wing_discretisation_spanwise::Vector{<:Real}=cos.(range(0, pi; length=20)),
+    wing_discretisation_chordwise::Union{Vector{<:Real}, Int}=zeros(0),
+    wing_discretisation_spanwise::Union{Vector{<:Real}, Int}=zeros(0),
     regularisation_radius :: Float64 = -1.,
     regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation()
     ) :: PEVLM
-
-    function geom_fn(x,y)
-        # x and y are swapped because of the desired indexing scheme.
-        xp = y * wing.chord_fn(x * wing.semispan) / 2
-        yp = x * wing.semispan
-        return [xp, yp, 0]
-    end
-    ref_lattice = VortexLattice(geom_fn;
-        ys=wing_discretisation_chordwise, 
-        xs=wing_discretisation_spanwise)
-    if dt == -1
-        dt = 0.05 * wing.chord_fn(0) / free_stream_vel
-    end
-    @assert(dt != 0.0)
-    if regularisation_radius == -1.
-        regularisation_radius = dt * free_stream_vel * 1.5
-    end
     
-    return PEVLM(
-        ref_wing_lattice=ref_lattice,
+    return PEVLM(;
+        reference_wing_geometry=wing,
         kinematics=kinematics,
         dt=dt,
         free_stream_vel=free_stream_vel,
         current_time=current_time,
+        wing_discretisation_chordwise=wing_discretisation_chordwise,
+        wing_discretisation_spanwise=wing_discretisation_spanwise,
         regularisation_kernel=regularisation_kernel,
         regularisation_radius=regularisation_radius
     )
@@ -148,7 +181,7 @@ end
 
 function update_wing_lattice!(a::PEVLM) :: Nothing
     z_offset = z_pos(a.kinematics, a.current_time)
-    aoa = AoA(a.kinematics, a.current_time)
+    aoa = -AoA(a.kinematics, a.current_time)
     piv_x = pivot_position(a.kinematics)
     
     new_geometry = get_vertices(a.reference_wing_lattice)
@@ -196,12 +229,12 @@ function compute_wing_vortex_strengths!(a::PEVLM) :: Nothing
     # Get the velocity of the points on the wing.
     z_vel = dzdt(a.kinematics, a.current_time) 
     z_off = z_pos(a.kinematics, a.current_time)
-    daoadt = dAoAdt(a.kinematics, a.current_time)
+    daoadt = -dAoAdt(a.kinematics, a.current_time)
     piv_x = pivot_position(a.kinematics)
     wing_vel = zeros(size(centres))
     wing_vel[:,3] .= z_vel
     wing_vel[:,1] += daoadt .* (centres[:,3] .- z_off)
-    wing_vel[:,2] += daoadt .* (centres[:,1] .- piv_x)
+    wing_vel[:,3] += daoadt .* (centres[:,1] .- piv_x)
 
     # Get the normal velocity from the wing / ext vels.
     ext_inf = sum((-ext_vel+wing_vel) .* normals, dims=2) # Dot product of each row.
@@ -346,6 +379,128 @@ function relax_wake!(a::PEVLM;
         a.regularisation_kernel, a.regularisation_radius )
     a.te_wake.wake_particles.vorts = npvort
     return;
+end
+
+function a0_to_le_vort_const(a::PEVLM) :: Vector{Float64}
+    # Gamma_1 = A_0 * THIS 
+    wds = a.wing_discretisation_spanwise
+    wdc = a.wing_discretisation_chordwise
+    ret = zeros(length(wds)-1)
+    le_verts = a.reference_wing_lattice.vertices[:,1,:]
+    le_fil_centres = (le_verts[2:end,:] + le_verts[1:end-1,:]) / 2
+    chords = a.reference_wing_geometry.chord_fn.(le_fil_centres[:,2])
+    dtheta = (-acos(wdc[2]) - -acos(wdc[1]))
+    corr = a.free_stream_vel * chords * 
+        (sin(dtheta) + dtheta)
+    return corr
+end
+
+
+function a0_value(a::PEVLM) :: Vector{Float64}
+    str = a.wing_lattice.strengths[:,1]
+    corr = a0_to_le_vort_const(a)
+    a0 = str ./ corr
+    return a0
+end
+
+function pressure_distribution(a::PEVLM; density::Float64=1.) :: Matrix{Float64}
+    # See page 427 of Katz and Plotkin
+    # Rate of change of ring vorticities.
+    cvd = a.wing_lattice.strengths
+    ovd = a.old_wing_lattice.strengths
+    dvdt = (cvd - ovd) ./ a.dt
+    # Geometry
+    rcs = ring_centres(a.wing_lattice)
+    tangentd1, tangentd2 = normalised_ring_tangents(a.wing_lattice)
+    ring_widthd1, ring_widthd2 = ring_widths(a.wing_lattice)
+    # Velocity at ring centres.
+    ni, nj, ~ = size(rcs)
+    rc_vec = zeros(ni*nj, 3)
+    surf_vels = zeros(ni, nj, 3)
+    for i = 1 : ni
+        for j = 1 : nj
+            rc_vec[(i-1)*nj+j,:] = rcs[i,j,:]
+        end
+    end
+    # Get const influences from the near_wake and free stream.
+    ext_vel = nonwing_ind_vel(a, rc_vec)
+    # Get the velocity of the points on the wing.
+    z_vel = dzdt(a.kinematics, a.current_time) 
+    z_off = z_pos(a.kinematics, a.current_time)
+    daoadt = -dAoAdt(a.kinematics, a.current_time)
+    piv_x = pivot_position(a.kinematics)
+    wing_vel = zeros(size(rc_vec))
+    wing_vel[:,3] .= z_vel
+    wing_vel[:,1] += daoadt .* (rc_vec[:,3] .- z_off)
+    wing_vel[:,3] += daoadt .* (rc_vec[:,1] .- piv_x)
+    ext_vel = ext_vel-wing_vel
+    for i = 1 : ni
+        for j = 1 : nj
+            surf_vels[i,j,:] = ext_vel[(i-1)*nj+j,:]
+        end
+    end
+    # Vorticity deriv wrt/ grid.
+    vd1, vd2 = vorticity_derivatives(a.wing_lattice) # include c_ij etc terms. 
+    
+    # Compute pressure differences
+    pres = zeros(ni,nj)
+    for i = 1 : ni
+        for j = 1 : nj
+            pres[i,j] = (sum(surf_vels[i,j,:].*tangentd1[i,j,:]) * vd1[i,j] +
+                sum(surf_vels[i,j,:].*tangentd2[i,j,:]) * vd2[i,j] +
+                dvdt[i,j])
+        end
+    end
+    pres = pres .* density
+    return pres
+end
+
+function lift_coefficient(a::PEVLM; lift_direction::Vector{<:Real}=[0.,0.,1.]) :: Float64
+    @assert(length(lift_direction)==3)
+    pressures = pressure_distribution(a)
+    areas = ring_areas(a.wing_lattice)
+    normal_force = pressures .* areas
+    normals = ring_normals(a.wing_lattice) # Unit vectors
+    ni, nj = size(areas)
+    coeffs = zeros(ni, nj)
+    for i = 1:ni
+        for j = 1:nj
+            coeffs[i,j] = sum(normals[i,j,:] .* lift_direction)
+        end
+    end
+    lift = sum(normal_force .* coeffs)
+    area = sum(ring_areas(a.wing_lattice))
+    U = a.free_stream_vel
+    CL = lift / (0.5 * U^2 * area)
+    return CL
+end
+
+function lift_coefficient_distribution(a::PEVLM; 
+        lift_direction::Vector{<:Real}=[0.,0.,1.]
+        ) :: Tuple{Vector{Float64}, Vector{Float64}}
+
+    @assert(length(lift_direction)==3)
+    pressures = pressure_distribution(a)
+    areas = ring_areas(a.wing_lattice)
+    normal_force = pressures .* areas
+    normals = ring_normals(a.wing_lattice) # Unit vectors
+    centres = ring_centres(a.wing_lattice)
+    ni, nj = size(areas)
+    coeffs = zeros(ni, nj)
+    for i = 1:ni
+        for j = 1:nj
+            coeffs[i,j] = sum(normals[i,j,:] .* lift_direction)
+        end
+    end
+    lifts = normal_force .* coeffs
+    areas = ring_areas(a.wing_lattice)
+    # chord wise section basis. 
+    lifts = map(x->sum(lifts[x,:]), collect(1:ni))
+    areas = map(x->sum(areas[x,:]), collect(1:ni))
+
+    U = a.free_stream_vel
+    Cl = lifts ./ (0.5 * U^2 * areas)
+    return Cl, centres[:,1,2]
 end
 
 #= IO FUNCTIONS =============================================================#

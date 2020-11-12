@@ -142,7 +142,7 @@ function compute_wing_vortex_strengths!(a::UnsteadyVortexLatticeMethod) :: Nothi
     normals = reshape(normals, size(normals)[1]*size(normals)[2], 3)
 
     # The wing's self influence
-    inf_mat, wing_ring_idxs = 
+    @time inf_mat, wing_ring_idxs = 
         ring_influence_matrix(a.wing_lattice, centres, normals)
 
     # Get const influences from the wake and free stream.
@@ -196,6 +196,57 @@ function external_induced_vel(
     return ext_vel
 end
 
+function pressure_distribution(a::UnsteadyVortexLatticeMethod; density::Float64=1.) :: Matrix{Float64}
+    # See page 427 of Katz and Plotkin
+    # Rate of change of ring vorticities.
+    cvd = a.wing_lattice.strengths
+    ovd = a.old_wing_lattice.strengths
+    dvdt = (cvd - ovd) ./ a.dt
+    # Geometry
+    rcs = ring_centres(a.wing_lattice)
+    tangentd1, tangentd2 = normalised_ring_tangents(a.wing_lattice)
+    ring_widthd1, ring_widthd2 = ring_widths(a.wing_lattice)
+    # Velocity at ring centres.
+    ni, nj, ~ = size(rcs)
+    rc_vec = zeros(ni*nj, 3)
+    surf_vels = zeros(ni, nj, 3)
+    for i = 1 : ni
+        for j = 1 : nj
+            rc_vec[(i-1)*nj+j,:] = rcs[i,j,:]
+        end
+    end
+    # Get const influences from the near_wake and free stream.
+    ext_vel = nonwing_ind_vel(a, rc_vec)
+    # Get the velocity of the points on the wing.
+    z_vel = dzdt(a.kinematics, a.current_time) 
+    z_off = z_pos(a.kinematics, a.current_time)
+    daoadt = dAoAdt(a.kinematics, a.current_time)
+    piv_x = pivot_position(a.kinematics)
+    wing_vel = zeros(size(rc_vec))
+    wing_vel[:,3] .= z_vel
+    wing_vel[:,1] += daoadt .* (rc_vec[:,3] .- z_off)
+    wing_vel[:,2] += daoadt .* (rc_vec[:,1] .- piv_x)
+    ext_vel = ext_vel-wing_vel
+    for i = 1 : ni
+        for j = 1 : nj
+            surf_vels[i,j,:] = ext_vel[(i-1)*nj+j,:]
+        end
+    end
+    # Vorticity deriv wrt/ grid.
+    vd1, vd2 = vorticity_derivatives(a.wing_lattice) # include c_ij etc terms. 
+    
+    # Compute pressure differences
+    pres = zeros(ni,nj)
+    for i = 1 : ni
+        for j = 1 : nj
+            pres[i,j] = (sum(surf_vels[i,j,:].*tangentd1[i,j,:]) * vd1[i,j] +
+                sum(surf_vels[i,j,:].*tangentd2[i,j,:]) * vd2[i,j] +
+                dvdt[i,j])
+        end
+    end
+    pres = pres .* density
+    return pres
+end
 
 function to_vtk(a::UnsteadyVortexLatticeMethod,
     filename_start::String, file_no::Int;

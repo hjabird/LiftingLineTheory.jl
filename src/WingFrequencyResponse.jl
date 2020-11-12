@@ -123,12 +123,18 @@ end
 function lift_coefficient(
     a::WingFrequencyResponse, fq::Real; extrapolate::Bool=true) :: ComplexF64
     boundl, boundu, ~ = get_interpolation_basis(a, fq)
-    coeff = im * fq / a.free_stream_vel
     df = boundu.angular_fq - boundl.angular_fq
     ca = (fq - boundl.angular_fq) / df
     cb = (boundu.angular_fq - fq) / df
-    res = (cb * lift_coefficient(boundl) 
-        + ca * lift_coefficient(boundu)) * coeff
+    if a.pitch_plunge == 3 #heave
+        coeff = im * fq / a.free_stream_vel
+        res = (cb * lift_coefficient(boundl) 
+            + ca * lift_coefficient(boundu)) * coeff
+    else # pitch
+        coeff = im / a.free_stream_vel
+        res = (cb * lift_coefficient(boundl) * boundl.angular_fq 
+            + ca * lift_coefficient(boundu) * boundu.angular_fq) * coeff
+    end
     return res
 end
 
@@ -174,7 +180,7 @@ function check(a::WingFrequencyResponse)
     @assert(a.free_stream_vel > 0)
     @assert(hasmethod(a.amplitude_fn, (Float64,)))
     @assert(a.num_terms >= 1)
-    @assert(a.pitch_plunge == 3 || pitch_plunge == 5)
+    @assert(a.pitch_plunge == 3 || a.pitch_plunge == 5)
     byfn = x->x.angular_fq
     @assert(issorted(a.solutions; by=byfn))
     return

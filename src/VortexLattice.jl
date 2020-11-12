@@ -452,6 +452,75 @@ function ring_normals(a::VortexLattice) :: Array{Float64, 3}
     return ret
 end
 
+function ring_tangents(a::VortexLattice) :: Tuple{Array{Float64,3}, Array{Float64,3}}
+    verts = a.vertices
+    tangentd1 = (verts[2:end, 1:end-1, :]
+            -verts[1:end-1, 1:end-1, :]
+            +verts[2:end, 2:end, :]
+            -verts[1:end-1, 2:end, :]) ./ 2
+    tangentd2 = (verts[1:end-1, 2:end, :]
+            -verts[1:end-1, 1:end-1, :]
+            +verts[2:end, 2:end, :]
+            -verts[2:end, 1:end-1, :]) ./ 2
+    return tangentd1, tangentd2
+end
+
+function normalised_ring_tangents(a::VortexLattice) :: Tuple{Array{Float64,3}, Array{Float64,3}}
+    td1, td2 = ring_tangents(a)
+    @assert(size(td1) == size(td2))
+    ni, nj, ~ = size(td1)
+    for i = 1 : ni
+        for j = 1: nj
+            td1[i,j,:] = td1[i,j,:] ./ sqrt(td1[i,j,1]^2 + td1[i,j,2]^2 +td1[i,j,3]^2)
+            td2[i,j,:] = td2[i,j,:] ./ sqrt(td2[i,j,1]^2 + td2[i,j,2]^2 +td2[i,j,3]^2)
+        end
+    end
+    return td1, td2
+end
+
+function ring_widths(a::VortexLattice) :: Tuple{Matrix{Float64}, Matrix{Float64}}
+    td1, td2 = ring_tangents(a)
+    @assert(size(td1) == size(td2))
+    nd1, nd2, ~ = size(td1)
+    ring_widthd1 = zeros(nd1, nd2)
+    ring_widthd2 = zeros(nd1, nd2)
+    for i = 1 : nd1
+        for j = 1 : nd2
+            ring_widthd1[i,j] = sqrt(td1[i,j,1]^2 
+                + td1[i,j,2]^2 +td1[i,j,3]^2)
+            ring_widthd2[i,j] = sqrt(td2[i,j,1]^2 
+                + td2[i,j,2]^2 +td2[i,j,3]^2)
+        end
+    end
+    return ring_widthd1, ring_widthd2
+end
+
+function ring_areas(a::VortexLattice) :: Matrix{Float64}
+    rw1, rw2 = ring_widths(a)
+    return rw1 .* rw2
+end
+
+function vorticity_derivatives(a::VortexLattice) :: Tuple{Matrix{Float64}, Matrix{Float64}}
+    strs = a.strengths
+    vdsd1 = zeros(size(strs))
+    vdsd2 = zeros(size(strs))
+    dstrd1 = strs[2:end,:] - strs[1:end-1,:] 
+    dstrd2 = strs[:,2:end] - strs[:,1:end-1]
+    # Take the derivative as the average of the backwards and forwards difference
+    # in the centre wings, and forwards / backwards difference at the edge. 
+    vdsd1[1,:] = dstrd1[1,:]
+    vdsd1[end,:] = dstrd1[end,:]
+    vdsd1[2:end-1,:] = (dstrd1[2:end,:] + dstrd1[1:end-1,:]) ./ 2
+    vdsd2[:,1] = dstrd2[:,1]
+    vdsd2[:,end] = dstrd2[:,end]
+    vdsd2[:,2:end-1] = (dstrd2[:,2:end] + dstrd2[:,1:end-1]) ./ 2
+    # Divide difference by width of the rings. 
+    rw1, rw2 = ring_widths(a)
+    vdsd1 = vdsd1 ./ rw1
+    vdsd2 = vdsd2 ./ rw2
+    return vdsd1, vdsd2
+end
+
 #-- TREATING VortexLattice like an array -------------------------------------
 
 function extent_i(a::VortexLattice)
