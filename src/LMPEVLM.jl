@@ -14,7 +14,7 @@
 #   hdr = csv_titles(prob)
 #   data = zeros(0, length(hdr))
 #   for i = 1 : 100
-#       advance_one_step(prob)
+#       advance_one_step!(prob)
 #       to_vtk(prob, "lmpevlm", i)
 #       data = vcat(data, csv_row(prob))
 #       if i % 2 == 0
@@ -56,8 +56,8 @@ mutable struct LMPEVLM
     # Detailed constructor
     function LMPEVLM(;
         reference_wing_geometry :: StraightAnalyticWing,
-        wing_discretisation_chordwise :: Union{Vector{<:Real}, Int} = zeros(0),
-        wing_discretisation_spanwise :: Union{Vector{<:Real}, Int} = zeros(0),
+        wing_discretisation_chordwise::Int=20,
+        wing_discretisation_spanwise::Int=0,
         kinematics :: RigidKinematics2D,
         dt :: Real = -1.,
         free_stream_vel :: Real = 1.,
@@ -69,9 +69,10 @@ mutable struct LMPEVLM
         tip_shedding :: Bool = false
         ) :: LMPEVLM
 
+        N = wing_discretisation_chordwise - 1
         if dt == -1
             cc = reference_wing_geometry.chord_fn(0.)
-            dt = (1/20) * cc / free_stream_vel
+            dt = cc / (free_stream_vel * N)
         end
         @assert(dt > 0.0)
         if regularisation_radius == -1.
@@ -79,22 +80,18 @@ mutable struct LMPEVLM
         end
 
         ## GEOMETRY
-        if length(wing_discretisation_chordwise) == 0
-            wing_discretisation_chordwise = -cos.(range(0, pi; length=15))
-        elseif typeof(wing_discretisation_chordwise) <: Int
-            @assert(wing_discretisation_chordwise > 1)
-            wing_discretisation_chordwise = -cos.(range(0, pi; 
+        @assert(wing_discretisation_chordwise > 1)
+        wing_discretisation_chordwise = collect(range(-1, 1; 
             length=wing_discretisation_chordwise))
-        end
-        if length(wing_discretisation_spanwise) == 0|| typeof(wing_discretisation_chordwise) <: Int
+
+        if wing_discretisation_spanwise == 0
             ar = aspect_ratio(reference_wing_geometry)
-            num_spanswise = Int64(round(10 + ar * 3))
-            wing_discretisation_spanwise = cos.(range(0, pi; length=num_spanswise))
-        elseif typeof(wing_discretisation_spanwise) <: Int
-            @assert(wing_discretisation_spanwise > 1)
-            wing_discretisation_spanwise = -cos.(range(0, pi; 
-                length=wing_discretisation_spanwise))
+            wing_discretisation_spanwise = Int64(round(ar * 15))
         end
+        @assert(wing_discretisation_spanwise > 1)
+        wing_discretisation_spanwise = collect(range(-1, 1; 
+            length=wing_discretisation_spanwise))
+
         function geom_fn(x,y)
             # x and y are swapped because of the desired indexing scheme.
             xp = y * reference_wing_geometry.chord_fn(
@@ -140,8 +137,8 @@ function LMPEVLM(
     dt :: Real = -1.,
     free_stream_vel :: Real = 1.,
     current_time :: Real = 0.,
-    wing_discretisation_chordwise::Union{Vector{<:Real}, Int}=zeros(0),
-    wing_discretisation_spanwise::Union{Vector{<:Real}, Int}=zeros(0),
+    wing_discretisation_chordwise::Int=20,
+    wing_discretisation_spanwise::Int=0,
     lesp_critical :: Real = -1.0,
 	kinematic_viscocity :: Real = 0.0,
     regularisation_radius :: Real = -1.0,
@@ -163,7 +160,7 @@ function LMPEVLM(
     )
 end
 
-function advance_one_step(a::LMPEVLM) :: Nothing
+function advance_one_step!(a::LMPEVLM) :: Nothing
     if !a.initialised
         update_wing_lattice!(a)
         initialise_wake!(a)
@@ -314,8 +311,9 @@ function update_le_wake_lattice!(a::LMPEVLM; buffer_rows::Int=1) :: Nothing
     a.le_wake.lattice_buffer.vertices[:, end,    :] = le_filament_verts
     # The strengths[:,end] and [:,end-1] should have been equal before new column.
     # So we need to zero the new [:,end-1] and [:,end]
-    a.le_wake.lattice_buffer.strengths[:, end-1] .= 0.
-    a.le_wake.lattice_buffer.strengths[:, end] .= 0.
+    new_strengths = a.le_wake.lattice_buffer.strengths[:, end-2]
+    a.le_wake.lattice_buffer.strengths[:, end-1] .= new_strengths
+    a.le_wake.lattice_buffer.strengths[:, end] .= new_strengths
 
     #a.le_wake.lattice_buffer.strengths[:, end] = -le_wake_strs
     buffer_to_particles(a.le_wake,
@@ -462,14 +460,12 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
     ni_w, nj_w = size(a.wing_lattice.strengths)
     ni_le, nj_le = size(a.le_wake.lattice_buffer.strengths)
     @assert(ni_le == ni_w)
-    shedding_le_mask = fill(false, ni_w)
     centres, normals = wing_centres_and_normals(a)
     w_inf_mat, w_ring_idxs = wing_self_influence_matrix(a)
     wing_le_idxs = w_ring_idxs[:,1]
     # The influence matrix for the LEV - we'll selectively use bits.
     lev_sublattice = extract_sublattice(
         a.le_wake.lattice_buffer, 1, ni_w, nj_le-1, nj_le)
-    @assert(all(lev_sublattice.strengths .== 0))
     le_inf_matx, le_ring_idxs = 
         ring_influence_matrix(lev_sublattice, centres, normals)
     # The two rows have to share the same ring strength. 
@@ -489,6 +485,7 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
     leading_edge_vorticity = zeros(ni_w)
     le_vort_sgn = zeros(ni_le)
     ring_strengths = zeros(size(centres)[1])
+    shedding_le_mask = fill(false, ni_w)
     le_iter_count = 0
     while true
         le_vort_sgn = map(x-> x > 0. ? 1. : -1., leading_edge_vorticity)
@@ -496,7 +493,7 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
         inf_mat = deepcopy(w_inf_mat)
         for i = 1 : length(le_vort_sgn)
             if shedding_le_mask[i]
-                inf_mat[:, wing_le_idxs[i]] -= (
+                inf_mat[:, wing_le_idxs[i]] += (
                     le_vort_sgn[i] .* le_inf_mat[:, i])
             end
         end
@@ -504,7 +501,7 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
         # Construct the modification to the ext vel vector.
         lesp_const_vel = zeros(size(centres)[1])
         lesp_const_vel += le_inf_mat[:,shedding_le_mask] * (
-            -le_vort_sgn[shedding_le_mask] .* critical_vorts[shedding_le_mask])
+            le_vort_sgn[shedding_le_mask] .* critical_vorts[shedding_le_mask])
         # Dot product of each row.
         ext_inf = sum((wing_vel-ext_vel) .* normals, dims=2) - lesp_const_vel
 
@@ -514,13 +511,14 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
         # Do we need to modify the shedding locations and try again?
         leading_edge_vorticity = map(i->ring_strengths[i], w_ring_idxs[:,1])
         o_le_shedding_mask = abs.(leading_edge_vorticity) .> critical_vorts
-        if o_le_shedding_mask == shedding_le_mask || le_iter_count > 2
+        if o_le_shedding_mask == shedding_le_mask || le_iter_count > 0
             # It only ever seems to iterate between 2 values, so
             # presumably it doesn't really matter which we choose.
             break
         else
-            print("\rIterating shedding mask.")
             le_iter_count += 1
+            a.le_wake.lattice_buffer.strengths[shedding_le_mask, end] .= 0.
+            a.le_wake.lattice_buffer.strengths[shedding_le_mask, end-1] .= 0.
             shedding_le_mask = o_le_shedding_mask
         end
     end
@@ -683,9 +681,9 @@ function a0_to_le_vort_const(a::LMPEVLM) :: Vector{Float64}
     le_verts = a.reference_wing_lattice.vertices[:,1,:]
     le_fil_centres = (le_verts[2:end,:] + le_verts[1:end-1,:]) / 2
     chords = a.reference_wing_geometry.chord_fn.(le_fil_centres[:,2])
-    dtheta = (-acos(wdc[2]) - -acos(wdc[1]))
+    dtheta = acos(-wdc[2]) - acos(-wdc[1])
     corr = a.free_stream_vel * chords * 
-        (sin(dtheta) + dtheta)
+        (sin(dtheta) + dtheta) / 1.13
     return corr
 end
 

@@ -12,7 +12,7 @@
 #   hdr = csv_titles(prob)
 #   data = zeros(0, length(hdr))
 #   for i = 1 : 100
-#       advance_one_step(prob)
+#       advance_one_step!(prob)
 #       to_vtk(prob, "ldvm_"*string(i))
 #       data = vcat(data, csv_row(prob))
 #   end
@@ -73,7 +73,7 @@ mutable struct LDVM
         le_particles=ParticleGroup2D(),
         shed_lev_on_last_step=false,
         regularisation=gaussian_regularisation(), reg_dist=-99.234,
-        lesp_crit=9e99,
+        lesp_critical=9e99,
         num_fourier_terms=8, current_fourier_terms=[], last_fourier_terms=[],
         rate_of_change_of_fourier_terms=[], current_time=0.0, dt=0.025)
 
@@ -82,16 +82,16 @@ mutable struct LDVM
 			reg_dist=sqrt(U[1]^2 + U[2]^2) * dt * 1.5
 		end
         @assert(reg_dist >= 0)		
-        @assert(lesp_crit >= 0, "LESP critical value must be positive.")
+        @assert(lesp_critical >= 0, "LESP critical value must be positive.")
         return new(U, external_perturbation, kinematics, foil, te_particles, 
-            le_particles, regularisation, reg_dist, lesp_crit, shed_lev_on_last_step,
+            le_particles, regularisation, reg_dist, lesp_critical, shed_lev_on_last_step,
             num_fourier_terms, current_fourier_terms, last_fourier_terms, 
             rate_of_change_of_fourier_terms, current_time, dt, 
             [], [], zeros(0,0))
     end
 end
 
-function advance_one_step(a::LDVM)
+function advance_one_step!(a::LDVM)
     if(length(a.current_fourier_terms)==0)
         initialise!(a)
     end        
@@ -375,6 +375,25 @@ function shed_new_le_particle_if_required_and_adjust_vorticities!(a)::Nothing
     return
 end
 
+function shed_new_leading_edge_particle_with_zero_vorticity!(a) :: Nothing
+    if a.shed_lev_on_last_step
+        pos = a.le_particles.positions[end,:]
+        pos_le = foil_points(a, [-1])[1,:]
+        pos -= (2. / 3.) * (pos - pos_le)
+        a.le_particles.positions = vcat(a.le_particles.positions, pos')
+        a.le_particles.vorts = vcat(a.le_particles.vorts, [0])
+    else
+        pos = foil_points(a, [-1])
+        vel = -foil_velocity(a, [-1])[1,:]
+        vel += a.U + a.external_perturbation(pos, a.current_time)[1,:]
+        pos = pos[1,:]
+        pos += vel * a.dt * 0.5
+        a.le_particles.positions = vcat(a.le_particles.positions, pos')
+        a.le_particles.vorts = vcat(a.le_particles.vorts, [0])
+    end
+    return
+end
+
 function eval_kelvin_lev_term(a::LDVM, normal_vels::Vector{Float64}):Float64
     chord = 2 * a.foil.semichord
     xs, ws = deepcopy(a.dw_positions), deepcopy(a.dw_weights)
@@ -459,25 +478,6 @@ function new_lev_A_0_effect_term(a::LDVM)::Float64
     return int
 end
 
-function shed_new_leading_edge_particle_with_zero_vorticity!(a) :: Nothing
-    if a.shed_lev_on_last_step
-        pos = a.le_particles.positions[end,:]
-        pos_le = foil_points(a, [-1])[1,:]
-        pos -= (2. / 3.) * (pos - pos_le)
-        a.le_particles.positions = vcat(a.le_particles.positions, pos')
-        a.le_particles.vorts = vcat(a.le_particles.vorts, [0])
-    else
-        pos = foil_points(a, [-1])
-        vel = -foil_velocity(a, [-1])[1,:]
-        vel += a.U + a.external_perturbation(pos, a.current_time)[1,:]
-        pos = pos[1,:]
-        pos += vel * a.dt * 0.5
-        a.le_particles.positions = vcat(a.le_particles.positions, pos')
-        a.le_particles.vorts = vcat(a.le_particles.vorts, [0])
-    end
-    return
-end
-
 function combine_wakes(a::LDVM)::ParticleGroup2D
     ret = ParticleGroup2D()
     ret.positions = vcat(a.te_particles.positions, a.le_particles.positions)
@@ -526,6 +526,11 @@ function redistribute_wake!(a::LDVM) :: Nothing
     @assert(size(a.te_particles.vorts)[1] == 
         size(a.te_particles.positions)[1])
     return;
+end
+
+function a0_value(a::LDVM)::Float64
+    @assert(length(a.current_fourier_terms)>0)
+    return a.current_fourier_terms[1]
 end
 
 function leading_edge_suction_force(a::LDVM, density::Real)::Float64
@@ -645,11 +650,23 @@ function lift_and_drag_coefficients(a::LDVM)
     return cl, cd
 end
 
+function to_vtk(a::LDVM, filename::String,
+    file_no::Int; 
+    include_foil=true,
+    streamdir::Vector{<:Real}=[1,0,0],
+    updir::Vector{<:Real}=[0,1,0],
+    translation::Vector{<:Real}=[0,0,0])::Nothing
+    name = filename * "_" * string(file_no)
+    to_vtk(a, name; include_foil=include_foil,
+        streamdir=streamdir, updir=updir, translation=translation)
+    return
+end
+
 function to_vtk(a::LDVM, filename::String; 
     include_foil=true,
     streamdir::Vector{<:Real}=[1,0,0],
     updir::Vector{<:Real}=[0,1,0],
-    translation::Vector{<:Real}=[0,0,0])
+    translation::Vector{<:Real}=[0,0,0])::Nothing
 
     wake = combine_wakes(a)
     np = length(wake.vorts)

@@ -33,24 +33,27 @@ mutable struct UnsteadyVortexLatticeMethod2D
 
     # Detailed constructor
     function UnsteadyVortexLatticeMethod2D(;
-        reference_foil_geometry :: ThinFoilGeometry,
-        wing_discretisation_chordwise::Union{Vector{<:Real},Int}=zeros(0),
+        foil :: ThinFoilGeometry = ThinFoilGeometry(0.5,x->0),
+        wing_discretisation_chordwise::Int=20,
         kinematics :: RigidKinematics2D,
-        dt::Float64 = -1.,
+        dt::Real = -1.,
         free_stream_vel :: Real = 1.,
-        current_time::Float64 = 0.,
-        lesp_critical::Float64 = -1.,
-        regularisation_radius::Float64 = -1.,
-        regularisation_kernel::CVortex.RegularisationFunction = singular_regularisation())
-
-        foil = reference_foil_geometry
-        if length(wing_discretisation_chordwise) == 0
-            wing_discretisation_chordwise = -cos.(range(0, pi; length=15))
-        elseif typeof(wing_discretisation_chordwise) <: Int
-            @assert(wing_discretisation_chordwise > 2)
-            wing_discretisation_chordwise = -cos.(range(0, pi; 
-                length=wing_discretisation_chordwise))
+        current_time::Real = 0.,
+        lesp_critical::Real = -1.,
+        regularisation_radius::Real = -1.,
+        regularisation_kernel::CVortex.RegularisationFunction = gaussian_regularisation())
+        
+        N = wing_discretisation_chordwise - 1
+        # For setup hints see Roesler and Epps 2018, Discretization requirements
+        # for VLM to match unsteady aero theory.
+        if dt == -1
+            dt = 2 * foil.semichord / (free_stream_vel * N)
         end
+        @assert(dt != 0.0)
+        regularisation_radius = dt * free_stream_vel * 1.5
+
+        @assert(wing_discretisation_chordwise > 2)
+        wing_discretisation_chordwise = collect(range(-1, 1; length=N+1))
         semichord = foil.semichord
         ref_lattice = ParticleGroup2D()
         wdc = wing_discretisation_chordwise       # The ring LE at TE are set quarter of a ring back
@@ -76,7 +79,7 @@ mutable struct UnsteadyVortexLatticeMethod2D
         le_wake = ParticleGroup2D()
 
         new(free_stream_vel, kinematics,
-            reference_foil_geometry, wing_discretisation_chordwise, 
+            foil, wing_discretisation_chordwise, 
             ref_lattice,
             foil_lattice, old_foil_lattice, te_wake, le_wake,
             dt, current_time, lesp_critical, false, zeros(0,0),
@@ -90,20 +93,13 @@ function UnsteadyVortexLatticeMethod2D(kinematics ::RigidKinematics2D;
     regularisation_kernel::CVortex.RegularisationFunction = singular_regularisation(), 
     regularisation_radius::Real = -1, 
     dt::Real = -1,
-    wing_discretisation_chordwise::Union{Vector{<:Real},Int}=zeros(0),
+    wing_discretisation_chordwise::Int=20,
     current_time::Real = 0,
     lesp_critical::Real=-1.0
     ) :: UnsteadyVortexLatticeMethod2D
 
-
-    if dt == -1
-        dt = 0.05 * foil.semichord / free_stream_vel
-    end
-    @assert(dt != 0.0)
-    regularisation_radius = dt * free_stream_vel
-
     return UnsteadyVortexLatticeMethod2D(;
-        reference_foil_geometry=foil,
+        foil=foil,
         wing_discretisation_chordwise=wing_discretisation_chordwise,
         kinematics=kinematics,
         dt=dt,
@@ -114,7 +110,7 @@ function UnsteadyVortexLatticeMethod2D(kinematics ::RigidKinematics2D;
         regularisation_radius=regularisation_radius)
 end
 
-function advance_one_step(a::UnsteadyVortexLatticeMethod2D) :: Nothing
+function advance_one_step!(a::UnsteadyVortexLatticeMethod2D) :: Nothing
     if !a.initialised
         update_foil_lattice!(a)
         initialise_wake!(a)
@@ -206,10 +202,18 @@ end
 
 function insert_le_wake_particle!(a::UnsteadyVortexLatticeMethod2D) :: Nothing
     check(a.le_wake; do_assert=true)
-
+    
+    newpos = zeros(2)
     le_pos = foil_le_position(UnsteadyVortexLatticeMethod2D, a.foil_lattice)
-    lp_pos = a.le_wake.positions[end-1,:]
-    newpos = le_pos + (lp_pos-le_pos) ./ 3
+    le_pos_ref = foil_le_position(UnsteadyVortexLatticeMethod2D, 
+        a.reference_foil_lattice)
+    if a.le_wake.vorts[end] == 0 # No shedding on previous timestep. 
+        vel = external_induced_vel(a, le_pos; as_singular=false) - wing_surface_velocity(a, le_pos_ref)
+        newpos = le_pos + vel * a.dt * 0.5
+    else # Shedding on previous timestep.
+        lp_pos = a.le_wake.positions[end-1,:]
+        newpos = lp_pos - 2/3 * (lp_pos-le_pos)
+    end
 
     a.le_wake.positions = cat(
         a.le_wake.positions[1:end-1,:], 
@@ -223,12 +227,13 @@ function insert_le_wake_particle!(a::UnsteadyVortexLatticeMethod2D) :: Nothing
     le_wake_rings = ring_strengths_from_vorts(UnsteadyVortexLatticeMethod2D, a.le_wake)
     le_wake_rings = cat(
         le_wake_rings[1:end-1], 
-        0; # New wake wing strength must be calculated simultaniously w/ foil ring strs.
+        le_wake_rings[end-1]; # Difference from this must be calced with LESP
         dims=1)
     le_wake_vorts = vorts_from_ring_strengths(UnsteadyVortexLatticeMethod2D, le_wake_rings)
     @assert(length(le_wake_vorts)==length(a.le_wake.vorts))
     a.le_wake.vorts = le_wake_vorts
     check(a.le_wake; do_assert=true)
+    
     return
 end
 
@@ -246,6 +251,15 @@ function initialise_wake!(a::UnsteadyVortexLatticeMethod2D) :: Nothing
         dims=1)
     a.le_wake.vorts = [0.0, 0.0]
     return
+end
+
+
+function wing_surface_velocity(
+    a::UnsteadyVortexLatticeMethod2D,
+    points_on_wing::Vector{<:Real}) :: Vector{Float64}
+    @assert(length(points_on_wing)==2)
+    vel = vec(wing_surface_velocity(a, reshape(points_on_wing,1,2)))
+    return vel
 end
 
 
@@ -300,7 +314,7 @@ function create_self_influence_matrix!(a::UnsteadyVortexLatticeMethod2D) :: Noth
         vort_str = [1, -1]
         vels = particle_induced_velocity(vort_pos, vort_str, 
             centres, CVortex.singular_regularisation(), 1)
-        infs[:,i] = sum(vels .* normals; dims=2)
+        infs[:,i] = sum(vels .* normals, dims=2)
     end
     a.self_influence_matrix = infs
     return
@@ -317,9 +331,9 @@ function compute_lev_influence_vector(
     vort_pos = a.le_wake.positions[end-1:end, :]
     vort_str = [1, -1]
     vels = particle_induced_velocity(vort_pos, vort_str, 
-        #points_on_wing, a.regularisation_kernel, a.regularisation_radius) 
-        points_on_wing, CVortex.singular_regularisation(), 1.)
-    infs = sum(vels .* normals_on_wing; dims=2)
+        points_on_wing, a.regularisation_kernel, 1.)
+        #points_on_wing, CVortex.singular_regularisation(), 1.)
+    infs = sum(vels .* normals_on_wing, dims=2)
     return infs
 end
 
@@ -327,29 +341,28 @@ end
 function compute_foil_vortex_strengths!(
     a::UnsteadyVortexLatticeMethod2D; 
     shedding_le::Bool = false # shedding_le = true should only be called from inside fn.
-    ) :: Nothing
+    ) :: Nothing 
 
     centres, normals = wing_centres_and_normals(a)
     infs = deepcopy(a.self_influence_matrix)
     if shedding_le
-        r_strs = ring_strengths_from_vorts(UnsteadyVortexLatticeMethod2D, a.foil_lattice)
         # Were using the formulation Gamma_LER = Gamma_1 -+ Gamma_LESP
         le_sgn = a.foil_lattice.vorts[1] > 0 ? 1. : -1.
         lev_inf = compute_lev_influence_vector(a, centres, normals)
         infs[:,1] += le_sgn * lev_inf
     end
 
-    # Get const influences from the te_wake and free stream.
-    ext_vel = external_induced_vel(a, centres; as_singular=true)
+    # Get const influences from the wakes and free stream.
+    ext_vel = external_induced_vel(a, centres; partially_singular=true)
     wing_vel = wing_surface_velocity(a, centres)
     lesp_const_vel = zeros(size(ext_vel)[1])   # Zero unless over lesp crit!
     critical_le_vorticity = 0
     if shedding_le
         critical_le_vorticity = le_sgn * a0_to_le_vort_const(a) * a.lesp_critical
-        lesp_const_vel = -critical_le_vorticity * lev_inf
+        lesp_const_vel = critical_le_vorticity * lev_inf
     end
     # Take dot product of velocities with normals. 
-    ext_inf = sum((wing_vel-ext_vel) .* normals, dims=2) - lesp_const_vel
+    ext_inf = sum((wing_vel-ext_vel) .* normals, dims=2) + lesp_const_vel
 
     # Something we can solve
     ring_strengths = vec(infs \ ext_inf)
@@ -358,15 +371,19 @@ function compute_foil_vortex_strengths!(
     a.foil_lattice.vorts = vorts
     if !shedding_le
         if abs(a0_value(a)) > a.lesp_critical
+            rs_levs = ring_strengths_from_vorts(
+                UnsteadyVortexLatticeMethod2D,  a.le_wake)
+            rs_levs[end] = 0    # May be non-zero. Simplifies next step. 
+            a.le_wake.vorts = vorts_from_ring_strengths(
+                UnsteadyVortexLatticeMethod2D, rs_levs)
             compute_foil_vortex_strengths!(a; shedding_le=true)
         end
     else
         rs_levs = ring_strengths_from_vorts(
             UnsteadyVortexLatticeMethod2D,  a.le_wake)
         rs_levs[end] = ring_strengths[1] - critical_le_vorticity
-        vorts_lew = vorts_from_ring_strengths(
+        a.le_wake.vorts = vorts_from_ring_strengths(
             UnsteadyVortexLatticeMethod2D, rs_levs)
-        a.le_wake.vorts = vorts_lew
     end
     return
 end
@@ -410,8 +427,22 @@ end
 
 function external_induced_vel(
     a::UnsteadyVortexLatticeMethod2D,
+    points :: Vector{<:Real};
+    as_singular::Bool=false,
+    partially_singular=false
+    ) :: Vector{Float64}
+    @assert(length(points)==2)
+    vel = vec(external_induced_vel(a, reshape(points,1,2);
+        as_singular=as_singular))
+    return vel
+end
+
+
+function external_induced_vel(
+    a::UnsteadyVortexLatticeMethod2D,
     points :: Matrix{<:Real};
-    as_singular::Bool=false
+    as_singular::Bool=false,
+    partially_singular=false
     ) :: Matrix{Float64}
 
     @assert(size(points)[2]==2)
@@ -422,13 +453,27 @@ function external_induced_vel(
     ext_vel[:,1] .= a.free_stream_vel
     if as_singular
         wake_ind_vel = CVortex.particle_induced_velocity(
-            cat(a.te_wake.positions, a.le_wake.positions; dims=1), 
-            cat(a.te_wake.vorts, a.le_wake.vorts; dims=1),
+            cat(a.te_wake.positions, a.le_wake.positions, dims=1), 
+            cat(a.te_wake.vorts, a.le_wake.vorts, dims=1),
             points, CVortex.singular_regularisation(), 1.)
+    elseif partially_singular
+        wake_ind_vel = CVortex.particle_induced_velocity(
+            cat(a.te_wake.positions[end:end,:], 
+                a.le_wake.positions[end-1:end,:], dims=1), 
+            cat(a.te_wake.vorts[end:end], 
+                a.le_wake.vorts[end-1:end], dims=1),
+            points, CVortex.singular_regularisation(), 1.)
+        wake_ind_vel += CVortex.particle_induced_velocity(
+            cat(a.te_wake.positions[1:end-1,:], 
+                a.le_wake.positions[1:end-2,:], dims=1), 
+            cat(a.te_wake.vorts[1:end-1], 
+                a.le_wake.vorts[1:end-2], dims=1),
+            points, a.regularisation_kernel,
+            a.regularisation_radius )
     else
         wake_ind_vel = CVortex.particle_induced_velocity(
-            cat(a.te_wake.positions, a.le_wake.positions; dims=1), 
-            cat(a.te_wake.vorts, a.le_wake.vorts; dims=1),
+            cat(a.te_wake.positions, a.le_wake.positions, dims=1), 
+            cat(a.te_wake.vorts, a.le_wake.vorts, dims=1),
             points, a.regularisation_kernel,
             a.regularisation_radius )
     end
@@ -441,10 +486,9 @@ function a0_to_le_vort_const(a::UnsteadyVortexLatticeMethod2D) :: Float64
     # Gamma_1 = A_0 * THIS 
     chord = a.reference_foil_geometry.semichord * 2
     wdc = a.chordwise_discretisation
-    dtheta = (-acos(wdc[2]) - -acos(wdc[1]))
-    #dtheta = -acos(wdc[2])
+    dtheta = acos(-wdc[2]) - acos(-wdc[1])
     corr = a.free_stream_vel * chord * 
-        (sin(dtheta) + dtheta)
+        (sin(dtheta) + dtheta) / 1.13
     return corr
 end
 
@@ -457,7 +501,7 @@ end
 
 
 function bound_vorticity(a::UnsteadyVortexLatticeMethod2D) :: Float64
-    return sum(a.foil_lattice.vorts[1:end-1])
+    return sum(a.foil_lattice.vorts[1:end-1]) + a.le_wake.vorts[end]
 end
 
 
@@ -466,14 +510,12 @@ function field_velocity(
     points::Matrix{<:Real}) :: Matrix{Float32}
 
     @assert(size(points)[2]==2)
-    vels = CVortex.particle_induced_velocity(
+    vels = particle_induced_velocity(
         cat(a.te_wake.positions, a.le_wake.positions; dims=1), 
         cat(a.te_wake.vorts, a.le_wake.vorts; dims=1),
-        points, a.regularisation_kernel,
-        a.regularisation_radius )
+        points, a.regularisation_kernel, a.regularisation_radius )
     vels += particle_induced_velocity(a.foil_lattice.positions, 
         a.foil_lattice.vorts, points, 
-        #CVortex.singular_regularisation(), a.regularisation_radius)
         a.regularisation_kernel, a.regularisation_radius)
     vels[:,1] .+= a.free_stream_vel
     return vels
@@ -494,9 +536,14 @@ function to_vtk(a::UnsteadyVortexLatticeMethod2D,
 end
 
 
-function cross_section_vels(a::UnsteadyVortexLatticeMethod2D, filename::String)
-    xs = collect(-1:0.01:1)
-    ys = collect(-1:0.01:1)
+function cross_section_vels(
+    a::UnsteadyVortexLatticeMethod2D, filename::String;
+    relative_resolution::Real=1/3
+    ) :: Nothing
+    boundsm, boundsp = solution_box_corners(a; 
+        padding = a.reference_foil_geometry.semichord * 2)
+    xs = collect(boundsm[1]:a.regularisation_radius*relative_resolution:boundsp[1])
+    ys = collect(boundsm[2]:a.regularisation_radius*relative_resolution:boundsp[2])
     nx = length(xs)
     ny = length(ys)
     coord_msh = zeros(nx, ny, 2)
@@ -527,6 +574,7 @@ function cross_section_vels(a::UnsteadyVortexLatticeMethod2D, filename::String)
     vtkfile = WriteVTK.vtk_grid(filename, p3ds', cells)
     WriteVTK.vtk_point_data(vtkfile, v3ds', "Velocity")
     WriteVTK.vtk_save(vtkfile)
+    return
 end
 
 
@@ -559,4 +607,20 @@ function total_field_vorticity(
     return (total_vorticity(a.foil_lattice) 
         + total_vorticity(a.te_wake)
         + total_vorticity(a.le_wake))
+end
+
+function solution_box_corners(
+    a::UnsteadyVortexLatticeMethod2D;
+    padding::Real = 0
+    ) :: Tuple{Vector{Float64}, Vector{Float64}}
+
+    xmf, xpf = extrema(a.foil_lattice.positions[:,1])
+    ymf, ypf = extrema(a.foil_lattice.positions[:,2])
+    xmt, xpt = extrema(a.te_wake.positions[:,1])
+    ymt, ypt = extrema(a.te_wake.positions[:,2])
+    xml, xpl = extrema(a.le_wake.positions[:,1])
+    yml, ypl = extrema(a.le_wake.positions[:,2])
+    xm, xp = extrema([xmf, xpf, xmt, xpt, xml, xpl])
+    ym, yp = extrema([ymf, ypf, ymt, ypt, yml, ypl])
+    return [xm, ym] .- padding, [xp, yp] .+ padding
 end

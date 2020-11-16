@@ -75,7 +75,7 @@ function UnsteadyVortexLatticeMethod(
 end
 
 
-function advance_one_step(a::UnsteadyVortexLatticeMethod) :: Nothing
+function advance_one_step!(a::UnsteadyVortexLatticeMethod) :: Nothing
     if !a.initialised
         update_wing_lattice!(a)
         initialise_wake!(a)

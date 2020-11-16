@@ -139,7 +139,7 @@ mutable struct LAULLT
     end
 end
 
-function advance_one_step(a::LAULLT)
+function advance_one_step!(a::LAULLT)
     if typeof(a.wake_discretisation) == Nothing
         a.wake_discretisation = construct_wake_lattice(a)
     end

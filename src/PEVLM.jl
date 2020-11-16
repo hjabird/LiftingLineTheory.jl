@@ -120,7 +120,7 @@ function PEVLM(
     )
 end
 
-function advance_one_step(a::PEVLM) :: Nothing
+function advance_one_step!(a::PEVLM) :: Nothing
     if !a.initialised
         update_wing_lattice!(a)
         initialise_wake!(a)

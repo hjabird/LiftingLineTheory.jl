@@ -32,11 +32,12 @@ export
 	VortexLattice,
 	
 	# Simulation control
-	advance_one_step,
+	advance_one_step!,
 	compute_fourier_terms!,
 	compute_collocation_points!,
 
 	# Post-processing
+	a0_value,
 	bound_vorticity,
 	lift_coefficient,
 	moment_coefficient,
