@@ -45,6 +45,7 @@ mutable struct LMPEVLM
 	kinematic_viscocity :: Float64
     regularisation_radius :: Float64
     regularisation_kernel :: CVortex.RegularisationFunction
+    ode_solver :: Function
     dt :: Float64
     current_time :: Float64
 
@@ -59,6 +60,7 @@ mutable struct LMPEVLM
         wing_discretisation_chordwise::Int=20,
         wing_discretisation_spanwise::Int=0,
         kinematics :: RigidKinematics2D,
+        ode_solver :: Function = runge_kutta_2_step,
         dt :: Real = -1.,
         free_stream_vel :: Real = 1.,
         current_time :: Real = 0.,
@@ -108,6 +110,7 @@ mutable struct LMPEVLM
             ys=cwdc, 
             xs=wing_discretisation_spanwise)
 
+        @assert(hasmethod(ode_solver, (PointsVortsODE, Float64)))
         if lesp_critical == -1
             lesp_critical = 9e99
         end
@@ -126,6 +129,7 @@ mutable struct LMPEVLM
             BufferedParticleWake(), BufferedParticleWake(),
             lesp_critical, kinematic_viscocity,
             regularisation_radius, regularisation_kernel,
+            ode_solver,
             dt, current_time, false, tip_shedding,
             zeros(Float32,0,0), zeros(Int64,0,0))
     end
@@ -137,12 +141,14 @@ function LMPEVLM(
     dt :: Real = -1.,
     free_stream_vel :: Real = 1.,
     current_time :: Real = 0.,
+    ode_solver :: Function = runge_kutta_2_step,
     wing_discretisation_chordwise::Int=20,
     wing_discretisation_spanwise::Int=0,
     lesp_critical :: Real = -1.0,
 	kinematic_viscocity :: Real = 0.0,
     regularisation_radius :: Real = -1.0,
-    regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation()
+    regularisation_kernel :: CVortex.RegularisationFunction = gaussian_regularisation(),
+    tip_shedding :: Bool = false
     ) :: LMPEVLM
 
     return LMPEVLM(
@@ -156,7 +162,9 @@ function LMPEVLM(
         lesp_critical=lesp_critical,
 		kinematic_viscocity=kinematic_viscocity,
         regularisation_kernel=regularisation_kernel,
-        regularisation_radius=regularisation_radius
+        regularisation_radius=regularisation_radius,
+        tip_shedding=tip_shedding,
+        ode_solver=ode_solver
     )
 end
 
@@ -198,7 +206,7 @@ function convect_wake!(a::LMPEVLM) :: Nothing
             get_vertices(a.te_wake), get_vertices(a.le_wake),
             get_vertices(a.lt_wake), get_vertices(a.rt_wake))
     end
-    function get_dvorts()
+    function get_vorts()
         ~, p_vorts_te = get_vortex_particles(a.te_wake)
         ~, p_vorts_le = get_vortex_particles(a.le_wake)
         ~, p_vorts_lt = get_vortex_particles(a.lt_wake)
@@ -216,7 +224,7 @@ function convect_wake!(a::LMPEVLM) :: Nothing
             nte_verts+nle_verts+nlt_verts+1:end,:])
         return
     end
-    function set_dvorts(new_vorts)
+    function set_vorts(new_vorts)
         a.te_wake.wake_particles.vorts = new_vorts[1:nte_vorts,:]
         a.le_wake.wake_particles.vorts = new_vorts[
             nte_vorts+1:nte_vorts+nle_vorts,:]
@@ -254,9 +262,9 @@ function convect_wake!(a::LMPEVLM) :: Nothing
         return p_dvorts
     end
     ode = PointsVortsODE(
-        get_dpoints, get_dvorts, vel_method, dvort_method,
-        set_dpoints, set_dvorts )
-    runge_kutta_4_step(ode, a.dt)
+        get_dpoints, get_vorts, vel_method, dvort_method,
+        set_dpoints, set_vorts )
+    a.ode_solver(ode, a.dt)
     return
 end
 
@@ -312,8 +320,8 @@ function update_le_wake_lattice!(a::LMPEVLM; buffer_rows::Int=1) :: Nothing
     # The strengths[:,end] and [:,end-1] should have been equal before new column.
     # So we need to zero the new [:,end-1] and [:,end]
     new_strengths = a.le_wake.lattice_buffer.strengths[:, end-2]
-    a.le_wake.lattice_buffer.strengths[:, end-1] .= new_strengths
-    a.le_wake.lattice_buffer.strengths[:, end] .= new_strengths
+    a.le_wake.lattice_buffer.strengths[:, end-1] = new_strengths
+    a.le_wake.lattice_buffer.strengths[:, end] = new_strengths
 
     #a.le_wake.lattice_buffer.strengths[:, end] = -le_wake_strs
     buffer_to_particles(a.le_wake,
@@ -477,7 +485,7 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
     # to do a critical A0 kind of thing.
     
     # Get const influences from the near_wake and free stream.
-    ext_vel = nonwing_ind_vel(a, centres)
+    #ext_vel = nonwing_ind_vel(a, centres)
     wing_vel = wing_surface_velocity(a, centres)
 
     # Iteration is required for the lesp criterion.
@@ -503,23 +511,26 @@ function compute_wing_vortex_strengths!(a::LMPEVLM
         lesp_const_vel += le_inf_mat[:,shedding_le_mask] * (
             le_vort_sgn[shedding_le_mask] .* critical_vorts[shedding_le_mask])
         # Dot product of each row.
-        ext_inf = sum((wing_vel-ext_vel) .* normals, dims=2) - lesp_const_vel
+        ext_vel = nonwing_ind_vel(a, centres)
+        ext_inf = sum((wing_vel-ext_vel) .* normals, dims=2) + lesp_const_vel
 
-        # Solve for ring strengths.
+
         ring_strengths = inf_mat \ ext_inf
-
         # Do we need to modify the shedding locations and try again?
-        leading_edge_vorticity = map(i->ring_strengths[i], w_ring_idxs[:,1])
+        wing_le_stengths = map(i->ring_strengths[i], w_ring_idxs[:,1])
+        le_wake_stengths = a.le_wake.lattice_buffer.strengths[:,end]
+        leading_edge_vorticity = wing_le_stengths - le_wake_stengths
         o_le_shedding_mask = abs.(leading_edge_vorticity) .> critical_vorts
+        #@assert(o_le_shedding_mask == abs.(leading_edge_vorticity ./ a0_to_le_vort_const(a) .> a.lesp_critical))
         if o_le_shedding_mask == shedding_le_mask || le_iter_count > 0
             # It only ever seems to iterate between 2 values, so
             # presumably it doesn't really matter which we choose.
             break
         else
             le_iter_count += 1
+            shedding_le_mask = o_le_shedding_mask
             a.le_wake.lattice_buffer.strengths[shedding_le_mask, end] .= 0.
             a.le_wake.lattice_buffer.strengths[shedding_le_mask, end-1] .= 0.
-            shedding_le_mask = o_le_shedding_mask
         end
     end
 
@@ -549,8 +560,6 @@ function nonwing_ind_vel(
     ext_vel[:,1] .= a.free_stream_vel
     # Influence of near wake
     ftew_starts, ftew_ends, ftew_strs = get_filaments( a.te_wake )
-    # 1st two rows of LE should be zeroed at this point so we don't have
-    # to extract them.
     flew_starts, flew_ends, flew_strs = get_filaments( a.le_wake )
     fltw_starts, fltw_ends, fltw_strs = get_filaments( a.lt_wake )
     frtw_starts, frtw_ends, frtw_strs = get_filaments( a.rt_wake )
@@ -568,7 +577,8 @@ function nonwing_ind_vel(
     ext_vel += CVortex.particle_induced_velocity(
         cat(p_tlocs, p_llocs, p_ltlocs, p_rtlocs; dims=1), 
         cat(p_tvorts, p_lvorts, p_ltvorts, p_rtvorts; dims=1), points,
-        CVortex.singular_regularisation(), a.regularisation_radius)
+        a.regularisation_kernel, a.regularisation_radius)
+        #CVortex.singular_regularisation(), a.regularisation_radius)
     @assert(all(isfinite.(ext_vel)), 
         "Non-finite value in external induced vels.")
     return ext_vel
@@ -688,8 +698,14 @@ function a0_to_le_vort_const(a::LMPEVLM) :: Vector{Float64}
 end
 
 
+function bound_vorticity(a::LMPEVLM) :: Vector{Float64}
+    str = a.wing_lattice.strengths[:,1] - a.le_wake.lattice_buffer.strengths[:,end] + a.te_wake.lattice_buffer.strengths[:,end]
+    return str
+end
+
+
 function a0_value(a::LMPEVLM) :: Vector{Float64}
-    str = a.wing_lattice.strengths[:,1] + a.le_wake.lattice_buffer.strengths[:,end]
+    str = a.wing_lattice.strengths[:,1] - a.le_wake.lattice_buffer.strengths[:,end]
     corr = a0_to_le_vort_const(a)
     a0 = str ./ corr
     return a0
@@ -815,13 +831,12 @@ end
 
 function lift_coefficient_distribution(a::LMPEVLM; 
     lift_direction::Vector{<:Real}=[0.,0.,1.]
-    ) :: Tuple{Vector{Float64}, Vector{Float64}}
+    ) :: Vector{Float64}
     @assert(length(lift_direction)==3)
     pressures = pressure_distribution(a)
     areas = ring_areas(a.wing_lattice)
     normal_force = pressures .* areas
     normals = ring_normals(a.wing_lattice) # Unit vectors
-    centres = ring_centres(a.wing_lattice)
     ni, nj = size(areas)
     coeffs = zeros(ni, nj)
     for i = 1:ni
@@ -837,7 +852,12 @@ function lift_coefficient_distribution(a::LMPEVLM;
 
     U = a.free_stream_vel
     Cl = lifts ./ (0.5 * U^2 * areas)
-    return Cl, centres[:,1,2]
+    return Cl
+end
+
+function wing_ys(a::LMPEVLM) :: Vector{Float64}
+    centres = ring_centres(a.wing_lattice)
+    return centres[:,1,2]
 end
 
 #= IO FUNCTIONS =============================================================#
@@ -902,25 +922,16 @@ function export_vorticity_field(
         resolution = a.regularisation_radius / 3
     end
     if length(bounds) == 0
-        pts = a.te_wake.wake_particles.positions
-        pts = vcat(pts, get_vertices(a.wing_lattice))
-        pts = vcat(pts, a.le_wake.wake_particles.positions)
-        pts = vcat(pts, a.lt_wake.wake_particles.positions)
-        pts = vcat(pts, a.rt_wake.wake_particles.positions)
-        bounds = [
-            minimum(pts[:,1]), maximum(pts[:,1]),
-            minimum(pts[:,2]), maximum(pts[:,2]),
-            minimum(pts[:,3]), maximum(pts[:,3])]
+        boundm, boundp = solution_box_corners(a; 
+            padding = a.reference_wing_geometry.chord_fn(0))
     end
     @assert(resolution > 0)
-    @assert(length(bounds) == 6)
     @assert(all(isfinite.(bounds)))
     res = resolution
 
-    xs = collect(bounds[1]-res:res:bounds[2]+res)
-    ys = collect(bounds[3]-res:res:bounds[4]+res)
-    zs = collect(bounds[5]-res:res:bounds[6]+res)
-    println(bounds)
+    xs = collect(boundm[1]:res:boundp[1])
+    ys = collect(boundm[2]:res:boundp[2])
+    zs = collect(boundm[3]:res:boundp[3])
     @assert(length(xs)>1)
     @assert(length(ys)>1)
     @assert(length(zs)>1)
@@ -959,4 +970,20 @@ function export_vorticity_field(
     WriteVTK.vtk_point_data(vtkfile, vorts', "Vorticity")
     WriteVTK.vtk_save(vtkfile)
     return
+end
+
+function solution_box_corners(
+    a::LMPEVLM;
+    padding::Real = 0
+    ) :: Tuple{Vector{Float64}, Vector{Float64}}
+
+    pts = a.te_wake.wake_particles.positions
+    pts = vcat(pts, get_vertices(a.wing_lattice))
+    pts = vcat(pts, a.le_wake.wake_particles.positions)
+    #pts = vcat(pts, a.lt_wake.wake_particles.positions)
+    #pts = vcat(pts, a.rt_wake.wake_particles.positions)
+    xm, xp = extrema(pts[:,1])
+    ym, yp = extrema(pts[:,2])
+    zm, zp = extrema(pts[:,3])
+    return [xm, ym, zm] .- padding, [xp, yp, zp] .+ padding
 end
