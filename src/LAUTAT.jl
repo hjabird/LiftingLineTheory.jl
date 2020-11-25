@@ -66,7 +66,7 @@ mutable struct LAUTAT
     end
 end
 
-function advance_one_step(a::LAUTAT)
+function advance_one_step!(a::LAUTAT)
     if(length(a.current_fourier_terms)==0)
         initialise!(a)
     end        
