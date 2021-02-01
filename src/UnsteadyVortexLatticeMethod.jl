@@ -5,6 +5,18 @@
 #
 # Copyright HJAB 2020
 #
+# Use:
+#   kinem = make_pitch_function(RigidKinematics2D, 0, t->deg2rad(40)*sin(t))
+#   wing = make_rectangular(StraightAnalyticWing, 4, 4)
+#   prob = UnsteadyVortexLatticeMethod(wing, kinem)
+#   hdr = csv_titles(prob)
+#   data = zeros(0, length(hdr))
+#   for i = 1 : 100
+#       advance_one_step!(prob)
+#       to_vtk(prob, "vlm", i)
+#       data = vcat(data, csv_row(prob))
+#   end
+#
 ################################################################################
 
 mutable struct UnsteadyVortexLatticeMethod
@@ -142,7 +154,7 @@ function compute_wing_vortex_strengths!(a::UnsteadyVortexLatticeMethod) :: Nothi
     normals = reshape(normals, size(normals)[1]*size(normals)[2], 3)
 
     # The wing's self influence
-    @time inf_mat, wing_ring_idxs = 
+    inf_mat, wing_ring_idxs = 
         ring_influence_matrix(a.wing_lattice, centres, normals)
 
     # Get const influences from the wake and free stream.
