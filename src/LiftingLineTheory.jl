@@ -35,6 +35,7 @@ export
 	advance_one_step!,
 	compute_fourier_terms!,
 	compute_collocation_points!,
+	redistribute_wake!,
 
 	# Post-processing
 	a0_value,

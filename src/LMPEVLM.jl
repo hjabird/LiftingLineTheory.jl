@@ -10,13 +10,10 @@
 # Use:
 #   kinem = make_pitch_function(RigidKinematics2D, 0, t->deg2rad(40)*sin(t))
 #   wing = make_rectangular(StraightAnalyticWing, 4, 4)
-#   prob = LMPEVLM(wing, kinematics; lesp_crit=0.11)
-#   hdr = csv_titles(prob)
-#   data = zeros(0, length(hdr))
+#   prob = LMPEVLM(wing, kinem; lesp_critical=0.11)
 #   for i = 1 : 100
 #       advance_one_step!(prob)
 #       to_vtk(prob, "lmpevlm", i)
-#       data = vcat(data, csv_row(prob))
 #       if i % 2 == 0
 #           redistribute_wake!(prob)
 #       end
